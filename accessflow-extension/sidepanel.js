@@ -1,3 +1,5 @@
+const BACKEND = "http://localhost:8000";
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -265,9 +267,10 @@ document.getElementById("cmd").addEventListener("keydown", (e) => {
 
 // --- Content Description & Narration (GPT-4o-mini) ---
 
-const BACKEND = "http://localhost:8000";
+// Natural TTS via OpenAI, falls back to browser TTS
+let currentAudio = null;
 
-function speak(text) {
+function speakBrowser(text) {
   return new Promise((resolve) => {
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
@@ -277,6 +280,36 @@ function speak(text) {
     utt.onerror = resolve;
     window.speechSynthesis.speak(utt);
   });
+}
+
+async function speak(text) {
+  // Stop any currently playing audio
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  window.speechSynthesis.cancel();
+
+  try {
+    const res = await fetch(`${BACKEND}/api/tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    if (!res.ok) throw new Error("TTS API failed");
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    return new Promise((resolve) => {
+      currentAudio = new Audio(url);
+      currentAudio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; resolve(); };
+      currentAudio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; resolve(); };
+      currentAudio.play();
+    });
+  } catch (_) {
+    // Fallback to browser TTS
+    return speakBrowser(text);
+  }
 }
 
 // Narration state — tracks section-by-section progress

@@ -4,6 +4,7 @@ Handles AI processing for the accessibility companion Chrome extension.
 """
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -599,6 +600,37 @@ Return ONLY the JSON object, no other text."""
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+
+
+# ========== TEXT-TO-SPEECH ENDPOINT ==========
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = "nova"  # nova, alloy, echo, fable, onyx, shimmer
+
+
+@app.post("/api/tts")
+async def text_to_speech(request: TTSRequest):
+    """
+    Convert text to natural-sounding speech using OpenAI TTS.
+    Returns audio/mpeg binary data.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=request.voice,
+            input=request.text,
+            speed=1.0
+        )
+        audio_bytes = response.content
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
 
 
 if __name__ == "__main__":

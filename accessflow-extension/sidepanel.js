@@ -154,6 +154,31 @@ document.getElementById("simplify").onclick = async () => {
 document.getElementById("send").onclick = async () => {
   const cmd = document.getElementById("cmd").value.trim();
   if (!cmd) return;
+
+  const c = cmd.toLowerCase().replace(/\s+/g, " ").trim();
+
+  // Browser-level navigation (Chrome back/forward arrows)
+  const backCmds = new Set(["back", "go back", "previous", "previous page", "prev", "prev page"]);
+  const fwdCmds  = new Set(["forward", "go forward", "next", "next page"]);
+
+  try {
+    const tab = await getActiveTab();
+    if (tab?.id && backCmds.has(c)) {
+      chrome.tabs.goBack(tab.id, () => {
+        const err = chrome.runtime.lastError;
+        if (err) log("Back navigation failed: " + err.message);
+      });
+      return;
+    }
+    if (tab?.id && fwdCmds.has(c)) {
+      chrome.tabs.goForward(tab.id, () => {
+        const err = chrome.runtime.lastError;
+        if (err) log("Forward navigation failed: " + err.message);
+      });
+      return;
+    }
+  } catch (_) {}
+
   const res = await sendToActiveTab({ type: "CMD", cmd });
   log(res?.message || "Done.");
 };
@@ -272,4 +297,130 @@ document.getElementById("next-section").onclick = () => {
 // --- end Content Description & Narration ---
 
 // Initial hint
+log("Tip: Open any normal https:// website, then click a mode.");
+
+
+/* ==========================
+   Voice input (Web Speech API)
+   ========================== */
+
+function afSetVoiceState(text) {
+  const el = document.getElementById("voiceState");
+  if (el) el.textContent = text;
+}
+
+function afSupportsSpeechRecognition() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+let afRecognition = null;
+let afListening = false;
+let afFinalText = "";
+
+function afSetupRecognition() {
+  if (!afSupportsSpeechRecognition()) return null;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const r = new SR();
+  r.continuous = false;
+  r.interimResults = true;
+  r.lang = "en-SG";
+
+  r.onstart = () => {
+    afListening = true;
+    afFinalText = "";
+    document.getElementById("mic")?.classList.add("listening");
+    afSetVoiceState("Listening…");
+  };
+
+  r.onend = () => {
+    afListening = false;
+    document.getElementById("mic")?.classList.remove("listening");
+    afSetVoiceState("Idle");
+  };
+
+  r.onerror = (e) => {
+    const code = e?.error || "unknown";
+    afSetVoiceState(code === "not-allowed" ? "Mic blocked" : "Voice error");
+    log("Voice input error: " + code);
+    if (code === "not-allowed") {
+      log("Mic is blocked for Chrome/this extension. Check OS microphone permission for Chrome, and Chrome Settings → Site settings → Microphone.");
+    }
+  };
+
+  r.onresult = (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      const txt = res[0]?.transcript || "";
+      if (res.isFinal) afFinalText += txt;
+      else interim += txt;
+    }
+    const combined = (afFinalText + " " + interim).trim();
+    const cmdEl = document.getElementById("cmd");
+    if (cmdEl) cmdEl.value = combined;
+    afSetVoiceState(combined ? ("Heard: " + combined.slice(0, 26) + (combined.length > 26 ? "…" : "")) : "Listening…");
+  };
+
+  return r;
+};
+
+async function afToggleMic() {
+  if (!afSupportsSpeechRecognition()) {
+    log("Voice input not supported in this browser.");
+    afSetVoiceState("Not supported");
+    return;
+  }
+  if (!afRecognition) afRecognition = afSetupRecognition();
+  if (!afRecognition) return;
+
+  if (afListening) {
+    try { afRecognition.stop(); } catch {}
+    return;
+  }
+
+  // Stop TTS while listening to reduce echo
+  try { window.speechSynthesis?.cancel(); } catch {}
+
+  try {
+    afRecognition.start();
+  } catch {
+    log("Voice already starting. Try again.");
+  }
+}
+
+// Auto-send on end if enabled
+function afBindVoiceAutoSend() {
+  if (!afRecognition) return;
+  const originalOnEnd = afRecognition.onend;
+  afRecognition.onend = async () => {
+    try { originalOnEnd?.(); } catch {}
+    const auto = document.getElementById("voiceAutoSend");
+    const cmd = document.getElementById("cmd")?.value?.trim() || "";
+    if (auto?.checked && cmd) {
+      // Reuse existing send button handler
+      document.getElementById("send")?.click();
+    }
+  };
+}
+
+(function initVoiceUI() {
+  const micBtn = document.getElementById("mic");
+  if (!micBtn) return;
+
+  if (!afSupportsSpeechRecognition()) {
+    afSetVoiceState("Not supported");
+    micBtn.disabled = true;
+    micBtn.title = "SpeechRecognition not available in this browser";
+    return;
+  }
+
+  micBtn.addEventListener("click", () => {
+    if (!afRecognition) {
+      afRecognition = afSetupRecognition();
+      afBindVoiceAutoSend();
+    }
+    afToggleMic();
+  });
+})();
+
 log("Tip: Open any normal https:// website, then click a mode.");

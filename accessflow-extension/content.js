@@ -210,6 +210,40 @@
     el.focus();
   }
 
+  // ========== INTELLIGENT PAGE SIMPLIFICATION ==========
+  const SIMPLIFY_STYLE_ID = "accessflow-simplify-styles";
+  let isSimplified = false;
+
+  function applySimplification(cssRules) {
+    let styleEl = document.getElementById(SIMPLIFY_STYLE_ID);
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = SIMPLIFY_STYLE_ID;
+      document.head.appendChild(styleEl);
+    }
+
+    const cssText = cssRules.map(rule =>
+      `${rule.selector} { ${rule.property}: ${rule.value} !important; }`
+    ).join("\n");
+
+    styleEl.textContent = cssText;
+    isSimplified = true;
+  }
+
+  function removeSimplification() {
+    const styleEl = document.getElementById(SIMPLIFY_STYLE_ID);
+    if (styleEl) styleEl.remove();
+    isSimplified = false;
+  }
+
+  function getPageContent() {
+    return {
+      url: window.location.href,
+      title: document.title,
+      content: document.body.innerText.substring(0, 5000) // First 5000 chars
+    };
+  }
+
   function handleCommand(cmd) {
     const c = normalize(cmd);
 
@@ -359,7 +393,24 @@
       }
       if (msg?.type === "RESET") {
         resetAll();
+        removeSimplification(); // Also remove simplification on reset
         sendResponse({ ok: true, message: "Reset complete." });
+        return true;
+      }
+      // ========== SIMPLIFY MESSAGE HANDLERS ==========
+      if (msg?.type === "SIMPLIFY_ON") {
+        const pageData = getPageContent();
+        sendResponse({ ok: true, pageData });
+        return true;
+      }
+      if (msg?.type === "SIMPLIFY_OFF") {
+        removeSimplification();
+        sendResponse({ ok: true, message: "Simplification removed" });
+        return true;
+      }
+      if (msg?.type === "APPLY_SIMPLIFY_RULES") {
+        applySimplification(msg.rules);
+        sendResponse({ ok: true, message: "Page simplified" });
         return true;
       }
       if (msg?.type === "CMD") {

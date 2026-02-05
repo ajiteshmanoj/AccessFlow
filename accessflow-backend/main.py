@@ -8,8 +8,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
+import json
 from dotenv import load_dotenv
 from openai import OpenAI
+
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 load_dotenv()
 
@@ -104,6 +117,49 @@ class NarratePageRequest(BaseModel):
 
 class NarratePageResponse(BaseModel):
     narration: str
+
+
+# ========== INTELLIGENT PAGE SIMPLIFICATION ==========
+
+class SimplifyRequest(BaseModel):
+    page_url: str
+    page_title: str
+    page_content: str  # Extracted text content
+    user_profile: Optional[UserProfile] = None
+
+
+class CSSRule(BaseModel):
+    selector: str
+    property: str
+    value: str
+
+
+class SimplifyResponse(BaseModel):
+    css_rules: List[CSSRule]
+    summary: str
+    changes_description: List[str]
+
+
+SIMPLIFY_SYSTEM_PROMPT = """You are an accessibility expert. Analyze the webpage and return CSS modifications to improve accessibility. Focus on:
+
+1. Typography: Increase font size (18px+ base), improve line spacing (1.8), use system fonts
+2. Contrast: Boost to WCAG AAA 7:1 ratio, use high contrast colors (#000 on #fff)
+3. Click Targets: Enlarge to minimum 44x44px, add adequate padding
+4. Layout: Simplify to single column, limit line length to 80ch
+5. Distractions: Remove animations, background images, auto-playing media
+6. Focus States: Add visible focus outlines (3px solid blue)
+
+IMPORTANT: Return ONLY a valid JSON object with no markdown formatting, no code blocks, no extra text. The JSON must have this exact structure:
+{
+    "css_rules": [
+        {"selector": "body", "property": "font-size", "value": "18px"},
+        {"selector": "body", "property": "line-height", "value": "1.8"}
+    ],
+    "summary": "Brief summary of changes made",
+    "changes_description": ["Change 1", "Change 2", "Change 3"]
+}
+
+Generate CSS rules that will significantly improve accessibility for the given page. Be specific with selectors when possible, but also include broad selectors for general improvements."""
 
 
 @app.get("/")
@@ -274,6 +330,169 @@ async def narrate_page(request: NarratePageRequest):
         narration = f"Could not narrate this page: {str(e)}"
 
     return NarratePageResponse(narration=narration)
+
+
+# ========== INTELLIGENT PAGE SIMPLIFICATION ENDPOINT ==========
+
+@app.post("/api/simplify", response_model=SimplifyResponse)
+async def simplify_page(request: SimplifyRequest):
+    """
+    Analyze a webpage and return AI-generated CSS modifications for accessibility.
+
+    This endpoint receives:
+    - page_url: URL of the current webpage
+    - page_title: Title of the webpage
+    - page_content: Text content from the page (first 5000 chars)
+    - user_profile: Optional user accessibility preferences
+
+    Returns:
+    - css_rules: List of CSS rules to apply
+    - summary: Brief description of changes
+    - changes_description: List of specific changes made
+    """
+
+    openai_key = os.getenv("OPENAI_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+
+    # Check if we have any AI provider available
+    has_openai = openai_key and OPENAI_AVAILABLE
+    has_anthropic = anthropic_key and ANTHROPIC_AVAILABLE
+
+    if not has_openai and not has_anthropic:
+        # Return balanced accessibility improvements if no API key
+        return SimplifyResponse(
+            css_rules=[
+                # Larger, readable text (scale up proportionally)
+                CSSRule(selector="html", property="font-size", value="120%"),
+                CSSRule(selector="body", property="line-height", value="1.7"),
+                CSSRule(selector="p, li, td, th, span, div", property="line-height", value="1.7"),
+
+                # Improve text readability
+                CSSRule(selector="body", property="font-family", value="system-ui, -apple-system, BlinkMacSystemFont, sans-serif"),
+                CSSRule(selector="p, li", property="letter-spacing", value="0.01em"),
+                CSSRule(selector="p, li", property="word-spacing", value="0.05em"),
+
+                # Better contrast for text (but preserve layout colors)
+                CSSRule(selector="p, span, li, td, th, label", property="color", value="#1a1a1a"),
+                CSSRule(selector="h1, h2, h3, h4, h5, h6", property="color", value="#000"),
+                CSSRule(selector="a", property="color", value="#0066cc"),
+                CSSRule(selector="a", property="text-decoration", value="underline"),
+
+                # Hide ads and distractions (but keep layout)
+                CSSRule(selector="[class*='advert'], [class*='ad-container'], [class*='sponsor'], [id*='ad-']", property="display", value="none"),
+                CSSRule(selector="[class*='popup'], [class*='modal'], [class*='overlay']:not(#accessflow)", property="display", value="none"),
+                CSSRule(selector="[class*='cookie'], [class*='consent'], [class*='banner']", property="display", value="none"),
+
+                # Bigger click targets
+                CSSRule(selector="a, button, [role='button']", property="min-height", value="44px"),
+                CSSRule(selector="a, button, [role='button']", property="min-width", value="44px"),
+                CSSRule(selector="input, select, textarea", property="min-height", value="44px"),
+                CSSRule(selector="input, select, textarea", property="padding", value="8px 12px"),
+
+                # Remove distracting animations
+                CSSRule(selector="*", property="animation-duration", value="0.001s"),
+                CSSRule(selector="*", property="transition-duration", value="0.001s"),
+
+                # Clear focus indicators
+                CSSRule(selector=":focus", property="outline", value="3px solid #0066cc"),
+                CSSRule(selector=":focus", property="outline-offset", value="2px"),
+
+                # Better spacing
+                CSSRule(selector="p", property="margin-bottom", value="1em"),
+                CSSRule(selector="img", property="max-width", value="100%"),
+            ],
+            summary="Applied balanced accessibility improvements (no API key configured)",
+            changes_description=[
+                "Increased text size by 20%",
+                "Improved line spacing to 1.7",
+                "Enhanced text contrast",
+                "Made links more visible with underlines",
+                "Hidden ads, popups, and cookie banners",
+                "Enlarged click targets to 44px minimum",
+                "Disabled distracting animations",
+                "Added clear focus indicators"
+            ]
+        )
+
+    # Build the prompt for the AI
+    user_prompt = f"""Analyze this webpage and generate CSS rules to improve its accessibility:
+
+URL: {request.page_url}
+Title: {request.page_title}
+
+Page Content (excerpt):
+{request.page_content[:3000]}
+
+{f"User has these accessibility needs: {request.user_profile.model_dump_json()}" if request.user_profile else ""}
+
+Based on this page's purpose and content, generate specific CSS rules to make it more accessible. Consider:
+- What type of page is this? (news, e-commerce, form, article, etc.)
+- What are the key interactive elements?
+- What would help users with vision, motor, or cognitive needs?
+
+Return ONLY the JSON object, no other text."""
+
+    try:
+        response_text = ""
+
+        if has_openai:
+            # Use OpenAI
+            client = openai.OpenAI(api_key=openai_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": SIMPLIFY_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=2048,
+                temperature=0.3
+            )
+            response_text = response.choices[0].message.content.strip()
+
+        elif has_anthropic:
+            # Use Anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2048,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                system=SIMPLIFY_SYSTEM_PROMPT
+            )
+            response_text = message.content[0].text.strip()
+
+        # Try to extract JSON from the response
+        # Handle case where response might have markdown code blocks
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        data = json.loads(response_text)
+
+        css_rules = [CSSRule(**rule) for rule in data.get("css_rules", [])]
+
+        return SimplifyResponse(
+            css_rules=css_rules,
+            summary=data.get("summary", "Page simplified for accessibility"),
+            changes_description=data.get("changes_description", ["Accessibility improvements applied"])
+        )
+
+    except json.JSONDecodeError as e:
+        # If JSON parsing fails, return default rules
+        return SimplifyResponse(
+            css_rules=[
+                CSSRule(selector="html, body", property="font-size", value="18px"),
+                CSSRule(selector="body", property="line-height", value="1.8"),
+                CSSRule(selector="body", property="color", value="#000"),
+                CSSRule(selector="body", property="background-color", value="#fff"),
+            ],
+            summary="Applied basic accessibility improvements (AI response parsing failed)",
+            changes_description=["Basic font and contrast improvements applied"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
 
 if __name__ == "__main__":

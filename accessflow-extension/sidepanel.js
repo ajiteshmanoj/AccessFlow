@@ -88,7 +88,67 @@ document.getElementById("tunnel").onclick = async () => {
 
 document.getElementById("reset").onclick = async () => {
   const res = await sendToActiveTab({ type: "RESET" });
+  isSimplifyActive = false;
+  document.getElementById("simplify").classList.remove("active");
   log(res?.message || "Reset.");
+};
+
+// ========== INTELLIGENT PAGE SIMPLIFICATION ==========
+let isSimplifyActive = false;
+
+document.getElementById("simplify").onclick = async () => {
+  if (isSimplifyActive) {
+    // Toggle OFF
+    await sendToActiveTab({ type: "SIMPLIFY_OFF" });
+    document.getElementById("simplify").classList.remove("active");
+    isSimplifyActive = false;
+    log("Simplification removed.");
+    return;
+  }
+
+  // Toggle ON - Get page content
+  log("Analyzing page with AI...");
+  const res = await sendToActiveTab({ type: "SIMPLIFY_ON" });
+
+  if (res?.pageData) {
+    try {
+      // Call backend API
+      const apiRes = await fetch("http://localhost:8000/api/simplify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          page_url: res.pageData.url,
+          page_title: res.pageData.title,
+          page_content: res.pageData.content
+        })
+      });
+
+      if (!apiRes.ok) {
+        throw new Error(`API returned ${apiRes.status}`);
+      }
+
+      const data = await apiRes.json();
+
+      // Apply CSS rules to page
+      await sendToActiveTab({
+        type: "APPLY_SIMPLIFY_RULES",
+        rules: data.css_rules
+      });
+
+      document.getElementById("simplify").classList.add("active");
+      isSimplifyActive = true;
+      log("Page simplified: " + data.summary);
+
+      // Log individual changes
+      if (data.changes_description && data.changes_description.length > 0) {
+        data.changes_description.forEach(change => log("  • " + change));
+      }
+    } catch (err) {
+      log("Error: " + err.message + ". Make sure backend is running on localhost:8000");
+    }
+  } else {
+    log("Could not get page content: " + (res?.message || "Unknown error"));
+  }
 };
 
 document.getElementById("send").onclick = async () => {

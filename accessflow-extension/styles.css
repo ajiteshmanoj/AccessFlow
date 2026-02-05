@@ -14,6 +14,7 @@ button{border:1px solid var(--border);background:#fff;padding:10px 12px;border-r
 button:hover{background:var(--soft);}
 button.primary{border-color:#c7d2fe;background:#eef2ff;}
 button.danger{border-color:#fecaca;background:#fff1f2;}
+button.active{border-color:#10b981;background:#d1fae5;}
 hr{border:none;border-top:1px solid var(--border);margin:12px 0;}
 .row{display:flex;gap:8px;}
 input{flex:1;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;}

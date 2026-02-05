@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AccessFlow</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <h2>AccessFlow</h2>
+    <div class="sub">Inclusive-design overlay for <span class="pill">any website</span></div>
+
+    <div class="grid">
+      <button id="inclusive" class="primary">✅ Inclusive Mode<br><span class="pill">bigger text</span> <span class="pill">bigger buttons</span> <span class="pill">more whitespace</span></button>
+      <button id="focus">🎯 Focus Mode<br><span class="pill">hide clutter</span> <span class="pill">highlight main</span></button>
+      <button id="tunnel">🧭 Task Tunnel<br><span class="pill">step-by-step forms</span></button>
+      <button id="reset" class="danger">↩ Reset Page</button>
+    </div>
+
+    <hr/>
+
+    <div class="row">
+      <input id="cmd" placeholder='Try: "highlight search" or "click login"' />
+      <button id="send">Send</button>
+    </div>
+    <div id="log" style="margin-top:10px;"></div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

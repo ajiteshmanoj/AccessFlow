@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "AccessFlow",
+  "version": "0.1.1",
+  "description": "Inclusive-design accessibility overlay: Inclusive Mode, Focus Mode, Task Tunnel (hackathon starter).",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "AccessFlow"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ]
+}

@@ -33,6 +33,19 @@
       <input id="cmd" placeholder='Try: "highlight search" or "click login"' />
       <button id="send">Send</button>
     </div>
+
+
+<div class="voice-bar">
+  <button id="mic" class="mic-btn" aria-label="Voice input">
+    <span class="mic-dot" aria-hidden="true"></span>
+    <span id="micLabel">Voice</span>
+  </button>
+  <div class="pill" id="voiceState">Idle</div>
+  <label class="voice-opt">
+    <input type="checkbox" id="voiceAutoSend" checked />
+    <span>Auto-send</span>
+  </label>
+</div>
     <div id="log" style="margin-top:10px;"></div>
 
     <script src="sidepanel.js"></script>

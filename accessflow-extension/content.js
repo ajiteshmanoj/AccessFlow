@@ -114,6 +114,69 @@
     return best;
   }
 
+
+function findSearchInput() {
+  // Look for a likely search input on the page
+  return (
+    findInputLike("search") ||
+    document.querySelector("input[type='search']") ||
+    findInputLike("query") ||
+    document.querySelector("input[name*='search' i]") ||
+    document.querySelector("input[placeholder*='search' i]") ||
+    document.querySelector("input[class*='search' i]") ||
+    document.querySelector("input[aria-label*='search' i]") ||
+    // fallback: prominent text input near top
+    Array.from(document.querySelectorAll("input[type='text'], input[type='search'], input:not([type])"))
+      .filter(inp => {
+        const rect = inp.getBoundingClientRect();
+        return rect.width > 120 && rect.height > 20;
+      })
+      .sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0] ||
+    null
+  );
+}
+
+function findPaginationButton(direction = "next", pageNum = null) {
+  const dir = (direction || "next").toLowerCase();
+
+  if (pageNum !== null && pageNum !== undefined) {
+    const n = String(pageNum);
+    const candidates = Array.from(document.querySelectorAll("a, button, [role='button']"))
+      .filter(el => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const t = (el.innerText || "").trim();
+        return t === n;
+      });
+    if (candidates.length) return candidates[0];
+  }
+
+  const relSel = (dir === "prev" || dir === "previous") ? "a[rel='prev'], a[rel='previous']" : "a[rel='next']";
+  const relEl = document.querySelector(relSel);
+  if (relEl) return relEl;
+
+  const ariaNeedle = (dir === "prev" || dir === "previous") ? "prev" : "next";
+  const ariaEl = document.querySelector(`a[aria-label*="${ariaNeedle}" i], button[aria-label*="${ariaNeedle}" i], [role='button'][aria-label*="${ariaNeedle}" i]`);
+  if (ariaEl) return ariaEl;
+
+  const host = (location.hostname || "").toLowerCase();
+  if (host.includes("shopee")) {
+    const shSel = (dir === "prev" || dir === "previous")
+      ? ".shopee-mini-page-controller__prev-btn, .shopee-page-controller__prev-btn"
+      : ".shopee-mini-page-controller__next-btn, .shopee-page-controller__next-btn";
+    const sh = document.querySelector(shSel);
+    if (sh) return sh;
+  }
+
+  const keywords = (dir === "prev" || dir === "previous")
+    ? ["previous", "prev", "back", "‹", "«", "<"]
+    : ["next", "more", "›", "»", ">", "→"];
+  for (const k of keywords) {
+    const el = findByText(k);
+    if (el) return el;
+  }
+  return null;
+}
   function findInputLike(query) {
     const q = normalize(query);
     const inputs = Array.from(document.querySelectorAll("input, textarea, select"));
@@ -136,16 +199,32 @@
     return true;
   }
 
-  function typeInto(el, text) {
+  function typeInto(el, text, opts = {}) {
     if (!el) return false;
     highlightElement(el);
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.focus();
+
+    // Clear existing value first (helps for search boxes with previous queries)
+    try {
+      if (opts.clear !== false) {
+        if (typeof el.select === "function") el.select();
+        if (typeof el.setSelectionRange === "function" && typeof el.value === "string") {
+          el.setSelectionRange(0, el.value.length);
+        }
+        el.value = "";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } catch {}
+
     el.value = text;
+
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    try { el.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true })); } catch {}
     return true;
   }
+
 
   // Task Tunnel: walk inputs in a form-like order, highlighting one at a time.
   let tunnelState = { active: false, idx: 0, inputs: [] };
@@ -288,7 +367,59 @@
       return { ok: true, message: "Previous step." };
     }
 
-    return { ok: false, message: `Unknown command. Try: "highlight search", "click login", "type email john@example.com".` };
+    // Higher-level: "search for <query>"
+const mSearch = c.match(/^(search for|search)\s+(.+)$/);
+if (mSearch) {
+  const query = cmd.replace(/^(search for|search)\s+/i, "").trim();
+  if (!query) return { ok: false, message: "Please say what you want to search for." };
+
+  const input = findSearchInput();
+  if (!input) return { ok: false, message: "Couldn't find a search box on this page." };
+
+  typeInto(input, query, { clear: true });
+
+  // Prefer Enter on the input (more reliable on Shopee than clicking a button)
+  try {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+  } catch {}
+
+  return { ok: true, message: `Searching for "${query}"...` };
+}
+
+// In-site pagination (kept separate from browser back/forward)
+if (c === "next results" || c === "next result page") {
+  const el = findPaginationButton("next");
+  if (!el) return { ok: false, message: "Couldn't find a Next button on this page." };
+  clickElement(el);
+  return { ok: true, message: "Going to next results page…" };
+}
+if (c === "previous results" || c === "prev results" || c === "previous result page") {
+  const el = findPaginationButton("prev");
+  if (!el) return { ok: false, message: "Couldn't find a Previous button on this page." };
+  clickElement(el);
+  return { ok: true, message: "Going to previous results page…" };
+}
+const mGoPage = c.match(/^(go to results page|results page)\s+(\d+)$/);
+if (mGoPage) {
+  const n = Number(mGoPage[2]);
+  const el = findPaginationButton("page", n);
+  if (!el) return { ok: false, message: `Couldn't find page ${n} on this page.` };
+  clickElement(el);
+  return { ok: true, message: `Going to results page ${n}…` };
+}
+
+// Scrolling
+if (c === "scroll down") {
+  window.scrollBy({ top: Math.max(300, window.innerHeight * 0.8), behavior: "smooth" });
+  return { ok: true, message: "Scrolled down." };
+}
+if (c === "scroll up") {
+  window.scrollBy({ top: -Math.max(300, window.innerHeight * 0.8), behavior: "smooth" });
+  return { ok: true, message: "Scrolled up." };
+}
+
+return { ok: false, message: `Unknown command. Try: "highlight search", "click login", "type email john@example.com".` };
   }
 
   // --- Content Description & Narration helpers ---

@@ -378,11 +378,26 @@ if (mSearch) {
 
   typeInto(input, query, { clear: true });
 
-  // Prefer Enter on the input (more reliable on Shopee than clicking a button)
-  try {
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
-  } catch {}
+// Trigger search (some sites require keypress + keyCode/which and/or a submit button click)
+try { input.focus(); } catch {}
+
+const evOpts = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+try {
+  input.dispatchEvent(new KeyboardEvent("keydown", evOpts));
+  input.dispatchEvent(new KeyboardEvent("keypress", evOpts));
+  input.dispatchEvent(new KeyboardEvent("keyup", evOpts));
+} catch {}
+
+// If a submit button exists in the same form/container, click it as a fallback
+try {
+  const form = input.form;
+  if (form) {
+    const btn =
+      form.querySelector("button[type='submit'], input[type='submit'], button[aria-label*='search' i]") ||
+      form.querySelector("button, [role='button']");
+    if (btn) btn.click();
+  }
+} catch {}
 
   return { ok: true, message: `Searching for "${query}"...` };
 }

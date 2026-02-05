@@ -173,6 +173,20 @@ const PANEL_COMMANDS = {
   "narrate":         "narrate-page",
 };
 
+// Track whether the current command was voice-initiated
+let voiceInitiated = false;
+
+// Log a message and speak it aloud, then optionally restart listening
+async function respond(msg) {
+  log(msg);
+  await speak(msg);
+  if (voiceInitiated) {
+    voiceInitiated = false;
+    // Small delay so mic doesn't pick up tail-end of TTS
+    setTimeout(() => startListening(), 300);
+  }
+}
+
 document.getElementById("send").onclick = async () => {
   const cmd = document.getElementById("cmd").value.trim();
   if (!cmd) return;
@@ -185,6 +199,20 @@ document.getElementById("send").onclick = async () => {
     return;
   }
 
+  // Help command
+  if (key === "help" || key === "what can i say" || key === "what can i do") {
+    await respond("You can say: click, highlight, scroll down, scroll up, go back, focus mode, simplify page, read page, describe images, or say an article title to open it.");
+    return;
+  }
+
+  // Stop voice / stop listening
+  if (key === "stop" || key === "stop listening" || key === "nevermind" || key === "never mind") {
+    voiceInitiated = false;
+    stopListening();
+    log("Stopped listening.");
+    return;
+  }
+
   // Try the built-in command handler first
   const res = await sendToActiveTab({ type: "CMD", cmd });
 
@@ -194,7 +222,7 @@ document.getElementById("send").onclick = async () => {
     try {
       // Get interactive elements from the page
       const pageRes = await sendToActiveTab({ type: "GET_PAGE_ELEMENTS" });
-      if (!pageRes?.ok) { log("Could not read page elements."); return; }
+      if (!pageRes?.ok) { await respond("Could not read page elements."); return; }
 
       // Call the AI interpreter
       const apiRes = await fetch(`${BACKEND}/api/interpret-command`, {
@@ -210,7 +238,7 @@ document.getElementById("send").onclick = async () => {
       const data = await apiRes.json();
 
       if (data.action === "none") {
-        log(data.explanation || "Could not understand that command.");
+        await respond(data.explanation || "Could not understand that command.");
         return;
       }
 
@@ -221,14 +249,14 @@ document.getElementById("send").onclick = async () => {
         target_index: data.target_index,
         value: data.value
       });
-      log(data.explanation || execRes?.message || "Done.");
+      await respond(data.explanation || execRes?.message || "Done.");
     } catch (err) {
-      log("AI error: " + err.message + ". Is the backend running?");
+      await respond("AI error: " + err.message + ". Is the backend running?");
     }
     return;
   }
 
-  log(res?.message || "Done.");
+  await respond(res?.message || "Done.");
 };
 
 document.getElementById("cmd").addEventListener("keydown", (e) => {
@@ -240,11 +268,15 @@ document.getElementById("cmd").addEventListener("keydown", (e) => {
 const BACKEND = "http://localhost:8000";
 
 function speak(text) {
-  window.speechSynthesis.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.rate  = 0.9;
-  utt.pitch = 1;
-  window.speechSynthesis.speak(utt);
+  return new Promise((resolve) => {
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate  = 0.9;
+    utt.pitch = 1;
+    utt.onend = resolve;
+    utt.onerror = resolve;
+    window.speechSynthesis.speak(utt);
+  });
 }
 
 // Narration state — tracks section-by-section progress
@@ -347,6 +379,8 @@ document.getElementById("next-section").onclick = () => {
 // --- Voice Input (Speech-to-Text) ---
 // SpeechRecognition runs in the content script (web page context).
 // Uses port-based messaging for reliable streaming of results.
+// Supports continuous listening: after a command is processed and
+// the response is spoken, listening restarts automatically.
 
 const micBtn = document.getElementById("mic");
 let isListening = false;
@@ -361,11 +395,26 @@ function stopListening() {
   }
 }
 
-micBtn.onclick = async () => {
-  if (isListening) {
-    stopListening();
-    return;
+function handleVoiceMessage(msg) {
+  if (msg.type === "VOICE_RESULT") {
+    document.getElementById("cmd").value = msg.transcript;
+    if (msg.isFinal) {
+      stopListening();
+      voiceInitiated = true; // mark so respond() will restart listening
+      document.getElementById("send").click();
+    }
   }
+  if (msg.type === "VOICE_END") {
+    stopListening();
+  }
+  if (msg.type === "VOICE_ERROR") {
+    log("Speech error: " + msg.error);
+    stopListening();
+  }
+}
+
+async function startListening() {
+  if (isListening) return;
 
   const tab = await getActiveTab();
   if (!tab?.id || isRestrictedUrl(tab.url || "")) {
@@ -381,30 +430,20 @@ micBtn.onclick = async () => {
     return;
   }
 
-  voicePort.onMessage.addListener((msg) => {
-    if (msg.type === "VOICE_RESULT") {
-      document.getElementById("cmd").value = msg.transcript;
-      if (msg.isFinal) {
-        stopListening();
-        document.getElementById("send").click();
-      }
-    }
-    if (msg.type === "VOICE_END") {
-      stopListening();
-    }
-    if (msg.type === "VOICE_ERROR") {
-      log("Speech error: " + msg.error);
-      stopListening();
-    }
-  });
-
-  voicePort.onDisconnect.addListener(() => {
-    stopListening();
-  });
+  voicePort.onMessage.addListener(handleVoiceMessage);
+  voicePort.onDisconnect.addListener(() => stopListening());
 
   isListening = true;
   micBtn.classList.add("listening");
   document.getElementById("cmd").value = "";
+}
+
+micBtn.onclick = async () => {
+  if (isListening) {
+    stopListening();
+  } else {
+    await startListening();
+  }
 };
 
 // --- end Voice Input ---

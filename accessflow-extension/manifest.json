@@ -34,8 +34,8 @@
   "commands": {
     "toggle-mic": {
       "suggested_key": {
-        "default": "Alt+Shift+M",
-        "mac": "Alt+Shift+M"
+        "default": "Ctrl+Shift+M",
+        "mac": "Command+Shift+M"
       },
       "description": "Toggle voice input (microphone)"
     }

@@ -567,6 +567,70 @@
   });
   // --- end Voice Input ---
 
+  // ========== FINGER TRACKING CURSOR ==========
+  const CURSOR_ID = "accessflow-finger-cursor";
+  let fingerCursor = null;
+
+  function createFingerCursor() {
+    if (fingerCursor) return fingerCursor;
+
+    fingerCursor = document.createElement("div");
+    fingerCursor.id = CURSOR_ID;
+    fingerCursor.style.position = "fixed";
+    fingerCursor.style.width = "30px";
+    fingerCursor.style.height = "30px";
+    fingerCursor.style.borderRadius = "50%";
+    fingerCursor.style.background = "rgba(37, 99, 235, 0.6)";
+    fingerCursor.style.border = "3px solid #2563eb";
+    fingerCursor.style.zIndex = "2147483646";
+    fingerCursor.style.pointerEvents = "none";
+    fingerCursor.style.transition = "transform 0.1s ease-out, background 0.2s ease";
+    fingerCursor.style.display = "none";
+    document.body.appendChild(fingerCursor);
+    return fingerCursor;
+  }
+
+  function removeFingerCursor() {
+    if (fingerCursor) {
+      fingerCursor.remove();
+      fingerCursor = null;
+    }
+  }
+
+  function updateFingerCursor(x, y, click) {
+    const cursor = createFingerCursor();
+    cursor.style.display = "block";
+
+    // Convert normalized coordinates (0-1) to pixel coordinates
+    const pixelX = x * window.innerWidth;
+    const pixelY = y * window.innerHeight;
+
+    cursor.style.left = `${pixelX}px`;
+    cursor.style.top = `${pixelY}px`;
+    cursor.style.transform = "translate(-50%, -50%)";
+
+    if (click) {
+      // Visual feedback on click
+      cursor.style.background = "rgba(245, 158, 11, 0.8)";
+      cursor.style.border = "3px solid #f59e0b";
+      cursor.style.transform = "translate(-50%, -50%) scale(1.3)";
+
+      // Trigger click on element at position
+      const elementAtPoint = document.elementFromPoint(pixelX, pixelY);
+      if (elementAtPoint && elementAtPoint !== cursor) {
+        elementAtPoint.click();
+      }
+
+      // Reset visual after 200ms
+      setTimeout(() => {
+        cursor.style.background = "rgba(37, 99, 235, 0.6)";
+        cursor.style.border = "3px solid #2563eb";
+        cursor.style.transform = "translate(-50%, -50%)";
+      }, 200);
+    }
+  }
+  // ========== END FINGER TRACKING CURSOR ==========
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg?.type === "PING") {
@@ -592,6 +656,37 @@
         resetAll();
         removeSimplification(); // Also remove simplification on reset
         sendResponse({ ok: true, message: "Reset complete." });
+        return true;
+      }
+      // ========== FINGER TRACKING HANDLERS ==========
+      if (msg?.type === "FINGER_POSITION") {
+        if (msg.detected) {
+          // SCROLL MODE: Handle scrolling with 2+ fingers
+          if (msg.mode === "scroll") {
+            // Hide cursor in scroll mode
+            if (fingerCursor) fingerCursor.style.display = "none";
+
+            // Perform scroll if action detected
+            if (msg.scroll === "scroll_up") {
+              window.scrollBy({ top: -120, behavior: "smooth" });
+            } else if (msg.scroll === "scroll_down") {
+              window.scrollBy({ top: 120, behavior: "smooth" });
+            }
+          }
+          // CURSOR MODE: Handle cursor movement and clicks
+          else {
+            updateFingerCursor(msg.x, msg.y, msg.click);
+          }
+        } else {
+          // Hide cursor when no finger detected
+          if (fingerCursor) fingerCursor.style.display = "none";
+        }
+        sendResponse({ ok: true });
+        return true;
+      }
+      if (msg?.type === "STOP_FINGER_CURSOR") {
+        removeFingerCursor();
+        sendResponse({ ok: true });
         return true;
       }
       // ========== SIMPLIFY MESSAGE HANDLERS ==========

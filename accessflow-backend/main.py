@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
 import json
+import subprocess
+import signal
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -41,6 +43,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ========== FINGER TRACKER PROCESS MANAGEMENT ==========
+finger_tracker_process = None
+
+def start_finger_tracker():
+    """Start the finger tracker subprocess."""
+    global finger_tracker_process
+
+    if finger_tracker_process and finger_tracker_process.poll() is None:
+        return {"status": "already_running", "message": "Finger tracker is already running"}
+
+    try:
+        # Start finger_tracker.py as subprocess
+        finger_tracker_process = subprocess.Popen(
+            ["python3", "finger_tracker.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=os.path.dirname(__file__)
+        )
+        return {"status": "started", "message": "Finger tracker started", "pid": finger_tracker_process.pid}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def stop_finger_tracker():
+    """Stop the finger tracker subprocess."""
+    global finger_tracker_process
+
+    if not finger_tracker_process or finger_tracker_process.poll() is not None:
+        finger_tracker_process = None
+        return {"status": "not_running", "message": "Finger tracker was not running"}
+
+    try:
+        finger_tracker_process.terminate()
+        finger_tracker_process.wait(timeout=5)
+        finger_tracker_process = None
+        return {"status": "stopped", "message": "Finger tracker stopped"}
+    except subprocess.TimeoutExpired:
+        finger_tracker_process.kill()
+        finger_tracker_process = None
+        return {"status": "killed", "message": "Finger tracker force-killed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# ========== END FINGER TRACKER MANAGEMENT ==========
 
 
 # Request/Response Models
@@ -234,6 +280,31 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.post("/api/finger-tracker/start")
+async def api_start_finger_tracker():
+    """Start the finger tracker service."""
+    result = start_finger_tracker()
+    return result
+
+
+@app.post("/api/finger-tracker/stop")
+async def api_stop_finger_tracker():
+    """Stop the finger tracker service."""
+    result = stop_finger_tracker()
+    return result
+
+
+@app.get("/api/finger-tracker/status")
+async def api_finger_tracker_status():
+    """Check if finger tracker is running."""
+    global finger_tracker_process
+    is_running = finger_tracker_process is not None and finger_tracker_process.poll() is None
+    return {
+        "running": is_running,
+        "pid": finger_tracker_process.pid if is_running else None
+    }
 
 
 @app.post("/api/chat", response_model=ChatResponse)

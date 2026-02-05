@@ -4,3 +4,6 @@ anthropic
 openai
 python-dotenv
 pydantic
+mediapipe
+opencv-python
+websockets

@@ -622,7 +622,7 @@ micBtn.onclick = async () => {
   }
 };
 
-// Global keyboard shortcut (Ctrl+Shift+M) forwarded from background.js
+// Global keyboard shortcut (Ctrl+Shift+V) forwarded from background.js
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "TOGGLE_MIC") {
     micBtn.click();
@@ -741,4 +741,4 @@ setInterval(checkBackendStatus, 60000);
 // ========== END BACKEND STATUS CHECK ==========
 
 // Initial hint
-log("Tip: Press Ctrl+Shift+M anytime to toggle voice input, or click the mic button.");
+log("Tip: Press Ctrl+Shift+V anytime to toggle voice input, or click the mic button.");

@@ -151,10 +151,83 @@ document.getElementById("simplify").onclick = async () => {
   }
 };
 
+// Voice-friendly aliases for side panel buttons
+const PANEL_COMMANDS = {
+  "inclusive mode":   "inclusive",
+  "inclusive":        "inclusive",
+  "bigger text":     "inclusive",
+  "focus mode":      "focus",
+  "focus":           "focus",
+  "hide clutter":    "focus",
+  "task tunnel":     "tunnel",
+  "tunnel":          "tunnel",
+  "step by step":    "tunnel",
+  "simplify page":   "simplify",
+  "simplify":        "simplify",
+  "reset page":      "reset",
+  "reset":           "reset",
+  "describe images": "describe-images",
+  "describe":        "describe-images",
+  "read page":       "narrate-page",
+  "read aloud":      "narrate-page",
+  "narrate":         "narrate-page",
+};
+
 document.getElementById("send").onclick = async () => {
   const cmd = document.getElementById("cmd").value.trim();
   if (!cmd) return;
+
+  // Check if the command matches a panel button
+  const key = cmd.toLowerCase().replace(/\s+/g, " ").trim();
+  const btnId = PANEL_COMMANDS[key];
+  if (btnId) {
+    document.getElementById(btnId).click();
+    return;
+  }
+
+  // Try the built-in command handler first
   const res = await sendToActiveTab({ type: "CMD", cmd });
+
+  // If built-in handler didn't recognize it, ask AI to interpret
+  if (res?.ok === false && res?.message?.startsWith("Unknown command")) {
+    log("Thinking...");
+    try {
+      // Get interactive elements from the page
+      const pageRes = await sendToActiveTab({ type: "GET_PAGE_ELEMENTS" });
+      if (!pageRes?.ok) { log("Could not read page elements."); return; }
+
+      // Call the AI interpreter
+      const apiRes = await fetch(`${BACKEND}/api/interpret-command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command: cmd,
+          elements: pageRes.elements,
+          page_title: pageRes.page_title,
+          page_url: pageRes.page_url
+        })
+      });
+      const data = await apiRes.json();
+
+      if (data.action === "none") {
+        log(data.explanation || "Could not understand that command.");
+        return;
+      }
+
+      // Execute the AI-interpreted action on the page
+      const execRes = await sendToActiveTab({
+        type: "EXECUTE_ACTION",
+        action: data.action,
+        target_index: data.target_index,
+        value: data.value
+      });
+      log(data.explanation || execRes?.message || "Done.");
+    } catch (err) {
+      log("AI error: " + err.message + ". Is the backend running?");
+    }
+    return;
+  }
+
   log(res?.message || "Done.");
 };
 
@@ -270,6 +343,71 @@ document.getElementById("next-section").onclick = () => {
 };
 
 // --- end Content Description & Narration ---
+
+// --- Voice Input (Speech-to-Text) ---
+// SpeechRecognition runs in the content script (web page context).
+// Uses port-based messaging for reliable streaming of results.
+
+const micBtn = document.getElementById("mic");
+let isListening = false;
+let voicePort = null;
+
+function stopListening() {
+  isListening = false;
+  micBtn.classList.remove("listening");
+  if (voicePort) {
+    try { voicePort.disconnect(); } catch (_) {}
+    voicePort = null;
+  }
+}
+
+micBtn.onclick = async () => {
+  if (isListening) {
+    stopListening();
+    return;
+  }
+
+  const tab = await getActiveTab();
+  if (!tab?.id || isRestrictedUrl(tab.url || "")) {
+    log("Open a normal https:// website first.");
+    return;
+  }
+  await ensureContentScript(tab.id);
+
+  try {
+    voicePort = chrome.tabs.connect(tab.id, { name: "accessflow-voice" });
+  } catch (e) {
+    log("Could not connect to page. Reload and try again.");
+    return;
+  }
+
+  voicePort.onMessage.addListener((msg) => {
+    if (msg.type === "VOICE_RESULT") {
+      document.getElementById("cmd").value = msg.transcript;
+      if (msg.isFinal) {
+        stopListening();
+        document.getElementById("send").click();
+      }
+    }
+    if (msg.type === "VOICE_END") {
+      stopListening();
+    }
+    if (msg.type === "VOICE_ERROR") {
+      log("Speech error: " + msg.error);
+      stopListening();
+    }
+  });
+
+  voicePort.onDisconnect.addListener(() => {
+    stopListening();
+  });
+
+  isListening = true;
+  micBtn.classList.add("listening");
+  document.getElementById("cmd").value = "";
+};
+
+// --- end Voice Input ---
 
 // Initial hint
 log("Tip: Open any normal https:// website, then click a mode.");

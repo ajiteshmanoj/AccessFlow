@@ -282,13 +282,135 @@
       return { ok: true, message: "Next step." };
     }
 
-    if (c === "prev" && tunnelState.active) {
-      tunnelState.idx = Math.max(0, tunnelState.idx - 1);
-      focusTunnelCurrent();
-      return { ok: true, message: "Previous step." };
+    if (c === "prev" || c === "previous") {
+      if (tunnelState.active) {
+        tunnelState.idx = Math.max(0, tunnelState.idx - 1);
+        focusTunnelCurrent();
+        return { ok: true, message: "Previous step." };
+      }
     }
 
-    return { ok: false, message: `Unknown command. Try: "highlight search", "click login", "type email john@example.com".` };
+    // Scroll commands
+    if (c === "scroll down" || c === "go down" || c === "page down") {
+      window.scrollBy({ top: window.innerHeight * 0.8, behavior: "smooth" });
+      return { ok: true, message: "Scrolled down." };
+    }
+    if (c === "scroll up" || c === "go up" || c === "page up") {
+      window.scrollBy({ top: -window.innerHeight * 0.8, behavior: "smooth" });
+      return { ok: true, message: "Scrolled up." };
+    }
+    if (c === "go to top" || c === "scroll to top" || c === "top") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return { ok: true, message: "Scrolled to top." };
+    }
+    if (c === "go to bottom" || c === "scroll to bottom" || c === "bottom") {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      return { ok: true, message: "Scrolled to bottom." };
+    }
+
+    // Navigation
+    if (c === "go back" || c === "back") {
+      window.history.back();
+      return { ok: true, message: "Going back." };
+    }
+    if (c === "go forward" || c === "forward") {
+      window.history.forward();
+      return { ok: true, message: "Going forward." };
+    }
+
+    // Tab through focusable elements
+    if (c === "tab" || c === "next element") {
+      const focusable = Array.from(document.querySelectorAll('a, button, input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+        .filter(el => el.getBoundingClientRect().width > 0);
+      const current = focusable.indexOf(document.activeElement);
+      const next = focusable[current + 1] || focusable[0];
+      if (next) { next.focus(); next.scrollIntoView({ behavior: "smooth", block: "center" }); highlightElement(next); }
+      return { ok: true, message: "Focused next element." };
+    }
+
+    return { ok: false, message: `Unknown command. Try: "click login", "highlight search", "scroll down", "go back".` };
+  }
+
+  // --- AI Command Interpreter helpers ---
+
+  function getInteractiveElements() {
+    const selectors = "a, button, [role='button'], input, select, textarea, [onclick], [tabindex]";
+    const nodes = Array.from(document.querySelectorAll(selectors));
+    const elements = [];
+    let idx = 0;
+    for (const el of nodes) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const text = (
+        el.innerText ||
+        el.getAttribute("aria-label") ||
+        el.getAttribute("placeholder") ||
+        el.getAttribute("value") ||
+        el.getAttribute("title") ||
+        el.getAttribute("alt") ||
+        ""
+      ).trim().slice(0, 120);
+      if (!text) continue;
+      elements.push({
+        index: idx,
+        tag: el.tagName.toLowerCase(),
+        text,
+        type: el.getAttribute("type") || null,
+        _el: el  // keep reference for execution (won't be serialized)
+      });
+      idx++;
+    }
+    // Store for later execution
+    window.__accessflow_elements = elements;
+    return elements.map(({ _el, ...rest }) => rest);
+  }
+
+  function executeAIAction(action, targetIndex, value) {
+    const elements = window.__accessflow_elements || [];
+
+    if (action === "scroll") {
+      if (value === "up") {
+        window.scrollBy({ top: -window.innerHeight * 0.8, behavior: "smooth" });
+        return { ok: true, message: "Scrolled up." };
+      }
+      window.scrollBy({ top: window.innerHeight * 0.8, behavior: "smooth" });
+      return { ok: true, message: "Scrolled down." };
+    }
+
+    if (action === "none") {
+      return { ok: false, message: "Could not find a matching element." };
+    }
+
+    const entry = elements.find(e => e.index === targetIndex);
+    if (!entry || !entry._el) {
+      return { ok: false, message: "Element not found on page." };
+    }
+
+    const el = entry._el;
+
+    if (action === "click") {
+      highlightElement(el);
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => el.click(), 400);
+      return { ok: true, message: `Clicking "${entry.text.slice(0, 50)}".` };
+    }
+
+    if (action === "highlight") {
+      highlightElement(el);
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return { ok: true, message: `Highlighted "${entry.text.slice(0, 50)}".` };
+    }
+
+    if (action === "type") {
+      highlightElement(el);
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.focus();
+      el.value = value || "";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return { ok: true, message: `Typed into "${entry.text.slice(0, 50)}".` };
+    }
+
+    return { ok: false, message: "Unknown action: " + action };
   }
 
   // --- Content Description & Narration helpers ---
@@ -370,6 +492,62 @@
 
   // --- end Content Description & Narration helpers ---
 
+  // --- Voice Input (Speech-to-Text) via port ---
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let voiceRecognition = null;
+
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "accessflow-voice") return;
+
+    if (!SpeechRecognition) {
+      port.postMessage({ type: "VOICE_ERROR", error: "Speech recognition not supported on this page." });
+      return;
+    }
+
+    // Stop any previous session
+    if (voiceRecognition) {
+      try { voiceRecognition.abort(); } catch (_) {}
+    }
+
+    voiceRecognition = new SpeechRecognition();
+    voiceRecognition.continuous = false;
+    voiceRecognition.interimResults = true;
+    voiceRecognition.lang = "en-US";
+
+    voiceRecognition.onresult = (event) => {
+      let transcript = "";
+      let isFinal = false;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+        if (event.results[i].isFinal) isFinal = true;
+      }
+      try { port.postMessage({ type: "VOICE_RESULT", transcript, isFinal }); } catch (_) {}
+    };
+
+    voiceRecognition.onend = () => {
+      try { port.postMessage({ type: "VOICE_END" }); } catch (_) {}
+      voiceRecognition = null;
+    };
+
+    voiceRecognition.onerror = (event) => {
+      let errorMsg = event.error;
+      if (event.error === "not-allowed") {
+        errorMsg = "Microphone access denied. Allow mic permission and try again.";
+      }
+      try { port.postMessage({ type: "VOICE_ERROR", error: errorMsg }); } catch (_) {}
+    };
+
+    port.onDisconnect.addListener(() => {
+      if (voiceRecognition) {
+        try { voiceRecognition.abort(); } catch (_) {}
+        voiceRecognition = null;
+      }
+    });
+
+    voiceRecognition.start();
+  });
+  // --- end Voice Input ---
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg?.type === "PING") {
@@ -415,6 +593,16 @@
       }
       if (msg?.type === "CMD") {
         const res = handleCommand(msg.cmd || "");
+        sendResponse(res);
+        return true;
+      }
+      if (msg?.type === "GET_PAGE_ELEMENTS") {
+        const elements = getInteractiveElements();
+        sendResponse({ ok: true, elements, page_title: document.title, page_url: window.location.href });
+        return true;
+      }
+      if (msg?.type === "EXECUTE_ACTION") {
+        const res = executeAIAction(msg.action, msg.target_index, msg.value);
         sendResponse(res);
         return true;
       }

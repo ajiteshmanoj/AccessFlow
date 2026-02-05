@@ -140,6 +140,53 @@ class SimplifyResponse(BaseModel):
     changes_description: List[str]
 
 
+INTERPRET_SYSTEM_PROMPT = """You are the command interpreter for AccessFlow, an accessibility tool. The user speaks a voice command and you determine what action to take on the webpage.
+
+You will receive:
+- The user's spoken command
+- A list of interactive elements on the page (links, buttons, inputs) with their text and index
+
+Return ONLY a valid JSON object with this structure:
+{
+  "action": "click" | "highlight" | "type" | "scroll" | "none",
+  "target_index": <index of the element to act on, or null>,
+  "value": "<text to type, if action is type, otherwise null>",
+  "explanation": "<brief user-friendly message about what you did>"
+}
+
+Rules:
+- If the user says something that sounds like an article title, headline, or link text, they want to CLICK it
+- If the user says "click X" or "press X" or "open X" or "go to X", find the best matching element and click it
+- If the user says "highlight X" or "show me X" or "find X" or "where is X", find the element and highlight it
+- If the user says "type X into Y" or "enter X in Y", type X into input Y
+- If the user says "scroll down/up" or navigation commands, use scroll
+- Match elements by fuzzy text similarity — the user won't say exact text
+- If no element matches at all, set action to "none" and explain what went wrong
+- Prefer partial matches over no match. E.g. "exercising in cold" should match "Is exercising in the cold good for you?"
+"""
+
+
+class PageElement(BaseModel):
+    index: int
+    tag: str           # "a", "button", "input", etc.
+    text: str          # visible text or label
+    type: Optional[str] = None  # input type, if applicable
+
+
+class InterpretCommandRequest(BaseModel):
+    command: str
+    elements: List[PageElement]
+    page_title: Optional[str] = ""
+    page_url: Optional[str] = ""
+
+
+class InterpretCommandResponse(BaseModel):
+    action: str
+    target_index: Optional[int] = None
+    value: Optional[str] = None
+    explanation: str
+
+
 SIMPLIFY_SYSTEM_PROMPT = """You are an accessibility expert. Analyze the webpage and return CSS modifications to improve accessibility. Focus on:
 
 1. Typography: Increase font size (18px+ base), improve line spacing (1.8), use system fonts
@@ -330,6 +377,65 @@ async def narrate_page(request: NarratePageRequest):
         narration = f"Could not narrate this page: {str(e)}"
 
     return NarratePageResponse(narration=narration)
+
+
+# ========== AI COMMAND INTERPRETER ENDPOINT ==========
+
+@app.post("/api/interpret-command", response_model=InterpretCommandResponse)
+async def interpret_command(request: InterpretCommandRequest):
+    """
+    Use GPT-4o-mini to interpret a natural-language voice command
+    and map it to a page action (click, highlight, type, scroll).
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return InterpretCommandResponse(
+            action="none", explanation="AI not configured (no OPENAI_API_KEY)."
+        )
+
+    # Build the element list for the prompt (cap at 60 to stay within token limits)
+    elements_text = "\n".join(
+        f"  [{el.index}] <{el.tag}> \"{el.text}\""
+        for el in request.elements[:60]
+    )
+
+    user_prompt = (
+        f"Page: {request.page_title} ({request.page_url})\n\n"
+        f"User's voice command: \"{request.command}\"\n\n"
+        f"Interactive elements on the page:\n{elements_text}\n\n"
+        "What action should be taken? Return ONLY the JSON object."
+    )
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": INTERPRET_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=200,
+            temperature=0.1
+        )
+        response_text = response.choices[0].message.content.strip()
+
+        # Handle markdown-wrapped JSON
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        data = json.loads(response_text)
+        return InterpretCommandResponse(
+            action=data.get("action", "none"),
+            target_index=data.get("target_index"),
+            value=data.get("value"),
+            explanation=data.get("explanation", "Done.")
+        )
+    except Exception as e:
+        return InterpretCommandResponse(
+            action="none", explanation=f"Could not interpret command: {str(e)}"
+        )
 
 
 # ========== INTELLIGENT PAGE SIMPLIFICATION ENDPOINT ==========

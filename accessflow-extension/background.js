@@ -14,3 +14,10 @@ chrome.action.onClicked.addListener(async (_tab) => {
     console.warn("Side Panel API not available. Check Chrome version and manifest permissions.");
   }
 });
+
+// Global keyboard shortcut → forward to side panel
+chrome.commands.onCommand.addListener((command) => {
+  if (command === "toggle-mic") {
+    chrome.runtime.sendMessage({ type: "TOGGLE_MIC" });
+  }
+});

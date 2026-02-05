@@ -510,9 +510,11 @@
     }
 
     voiceRecognition = new SpeechRecognition();
-    voiceRecognition.continuous = false;
+    voiceRecognition.continuous = true;
     voiceRecognition.interimResults = true;
     voiceRecognition.lang = "en-US";
+
+    let portOpen = true;
 
     voiceRecognition.onresult = (event) => {
       let transcript = "";
@@ -521,23 +523,40 @@
         transcript += event.results[i][0].transcript;
         if (event.results[i].isFinal) isFinal = true;
       }
-      try { port.postMessage({ type: "VOICE_RESULT", transcript, isFinal }); } catch (_) {}
+      if (portOpen) {
+        try { port.postMessage({ type: "VOICE_RESULT", transcript, isFinal }); } catch (_) {}
+      }
     };
 
     voiceRecognition.onend = () => {
-      try { port.postMessage({ type: "VOICE_END" }); } catch (_) {}
+      // In continuous mode the browser may still fire onend (e.g. network
+      // hiccup, long silence timeout). Restart automatically while the
+      // port is still open — the sidepanel controls the real stop via
+      // port disconnect.
+      if (portOpen && voiceRecognition) {
+        try { voiceRecognition.start(); } catch (_) {
+          try { port.postMessage({ type: "VOICE_END" }); } catch (_2) {}
+          voiceRecognition = null;
+        }
+        return;
+      }
       voiceRecognition = null;
     };
 
     voiceRecognition.onerror = (event) => {
+      // "aborted" fires when we intentionally stop — not a real error
+      if (event.error === "aborted") return;
       let errorMsg = event.error;
       if (event.error === "not-allowed") {
         errorMsg = "Microphone access denied. Allow mic permission and try again.";
       }
-      try { port.postMessage({ type: "VOICE_ERROR", error: errorMsg }); } catch (_) {}
+      if (portOpen) {
+        try { port.postMessage({ type: "VOICE_ERROR", error: errorMsg }); } catch (_) {}
+      }
     };
 
     port.onDisconnect.addListener(() => {
+      portOpen = false;
       if (voiceRecognition) {
         try { voiceRecognition.abort(); } catch (_) {}
         voiceRecognition = null;

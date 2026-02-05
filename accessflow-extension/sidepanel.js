@@ -178,15 +178,15 @@ const PANEL_COMMANDS = {
 // Track whether the current command was voice-initiated
 let voiceInitiated = false;
 
-// Log a message and speak it aloud, then optionally restart listening
+// Conversation history for contextual AI understanding (capped at 10 entries)
+let conversationHistory = [];
+
+// Log a message and speak it aloud.
+// Mic stays open continuously — no need to restart after each response.
 async function respond(msg) {
   log(msg);
   await speak(msg);
-  if (voiceInitiated) {
-    voiceInitiated = false;
-    // Small delay so mic doesn't pick up tail-end of TTS
-    setTimeout(() => startListening(), 300);
-  }
+  voiceInitiated = false;
 }
 
 document.getElementById("send").onclick = async () => {
@@ -234,12 +234,16 @@ document.getElementById("send").onclick = async () => {
           command: cmd,
           elements: pageRes.elements,
           page_title: pageRes.page_title,
-          page_url: pageRes.page_url
+          page_url: pageRes.page_url,
+          conversation_history: conversationHistory
         })
       });
       const data = await apiRes.json();
 
       if (data.action === "none") {
+        conversationHistory.push({ role: "user", text: cmd });
+        conversationHistory.push({ role: "assistant", text: data.explanation || "Could not understand that command." });
+        if (conversationHistory.length > 10) conversationHistory = conversationHistory.slice(-10);
         await respond(data.explanation || "Could not understand that command.");
         return;
       }
@@ -251,7 +255,19 @@ document.getElementById("send").onclick = async () => {
         target_index: data.target_index,
         value: data.value
       });
-      await respond(data.explanation || execRes?.message || "Done.");
+
+      // Build spoken response, appending suggestion if present
+      let spokenResponse = data.explanation || execRes?.message || "Done.";
+      if (data.suggestion) {
+        spokenResponse += ". " + data.suggestion;
+      }
+
+      // Push to conversation history
+      conversationHistory.push({ role: "user", text: cmd });
+      conversationHistory.push({ role: "assistant", text: spokenResponse });
+      if (conversationHistory.length > 10) conversationHistory = conversationHistory.slice(-10);
+
+      await respond(spokenResponse);
     } catch (err) {
       await respond("AI error: " + err.message + ". Is the backend running?");
     }
@@ -415,11 +431,46 @@ document.getElementById("next-section").onclick = () => {
 // Supports continuous listening: after a command is processed and
 // the response is spoken, listening restarts automatically.
 
+// --- Sound Effects (Web Audio API) ---
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return _audioCtx;
+}
+
+function playTone(freq, durationMs, startDelay = 0) {
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.value = 0.15;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    const t = ctx.currentTime + startDelay / 1000;
+    osc.start(t);
+    osc.stop(t + durationMs / 1000);
+  } catch (_) { /* audio not available — safe to ignore */ }
+}
+
+function playStartChime() {
+  playTone(440, 80, 0);    // first note
+  playTone(580, 80, 90);   // rising second note
+}
+
+function playStopTone() {
+  playTone(380, 100, 0);
+}
+// --- end Sound Effects ---
+
 const micBtn = document.getElementById("mic");
 let isListening = false;
 let voicePort = null;
+let voicePortId = 0; // monotonic ID to guard against stale disconnect events
 
 function stopListening() {
+  if (isListening) playStopTone();
   isListening = false;
   micBtn.classList.remove("listening");
   if (voicePort) {
@@ -432,12 +483,15 @@ function handleVoiceMessage(msg) {
   if (msg.type === "VOICE_RESULT") {
     document.getElementById("cmd").value = msg.transcript;
     if (msg.isFinal) {
-      stopListening();
-      voiceInitiated = true; // mark so respond() will restart listening
+      // Don't stop listening — continuous mode keeps the mic open.
+      // Just submit the command; after respond() finishes it will
+      // keep the same port alive for the next utterance.
+      voiceInitiated = true;
       document.getElementById("send").click();
     }
   }
   if (msg.type === "VOICE_END") {
+    // Content script couldn't restart recognition — truly done
     stopListening();
   }
   if (msg.type === "VOICE_ERROR") {
@@ -463,11 +517,17 @@ async function startListening() {
     return;
   }
 
+  const myPortId = ++voicePortId;
   voicePort.onMessage.addListener(handleVoiceMessage);
-  voicePort.onDisconnect.addListener(() => stopListening());
+  voicePort.onDisconnect.addListener(() => {
+    // Only stop if this is still the active port (prevents stale disconnect
+    // from killing a new listening session started by continuous-listen)
+    if (myPortId === voicePortId) stopListening();
+  });
 
   isListening = true;
   micBtn.classList.add("listening");
+  playStartChime();
   document.getElementById("cmd").value = "";
 }
 
@@ -479,7 +539,14 @@ micBtn.onclick = async () => {
   }
 };
 
+// Global keyboard shortcut (Alt+Shift+M) forwarded from background.js
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "TOGGLE_MIC") {
+    micBtn.click();
+  }
+});
+
 // --- end Voice Input ---
 
 // Initial hint
-log("Tip: Open any normal https:// website, then click a mode.");
+log("Tip: Press Alt+Shift+M anytime to toggle voice input, or click the mic button.");

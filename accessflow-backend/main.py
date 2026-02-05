@@ -146,13 +146,15 @@ INTERPRET_SYSTEM_PROMPT = """You are the command interpreter for AccessFlow, an 
 You will receive:
 - The user's spoken command
 - A list of interactive elements on the page (links, buttons, inputs) with their text and index
+- Recent conversation history (previous commands and responses) for context
 
 Return ONLY a valid JSON object with this structure:
 {
   "action": "click" | "highlight" | "type" | "scroll" | "none",
   "target_index": <index of the element to act on, or null>,
   "value": "<text to type, if action is type, otherwise null>",
-  "explanation": "<brief user-friendly message about what you did>"
+  "explanation": "<brief user-friendly message about what you did>",
+  "suggestion": "<a short contextual follow-up suggestion for the user>"
 }
 
 Rules:
@@ -164,6 +166,18 @@ Rules:
 - Match elements by fuzzy text similarity — the user won't say exact text
 - If no element matches at all, set action to "none" and explain what went wrong
 - Prefer partial matches over no match. E.g. "exercising in cold" should match "Is exercising in the cold good for you?"
+
+Conversation context rules:
+- Use the conversation history to resolve references like "the first one", "that article", "no the other one", "do that again", "go back"
+- If the user says "go back" after clicking a link, they want to navigate back
+- If the user says "the first article" or "the second one", resolve the reference using the elements list and conversation context
+
+Suggestion rules — always include a short, helpful follow-up suggestion:
+- After clicking a link/article: "Say 'read page' to hear it aloud, or 'go back' to return"
+- After scrolling: "Keep scrolling, or say an article title to open it"
+- After highlighting an element: "Say 'click' to activate it, or keep browsing"
+- After typing into a field: "Say 'click' on a submit button, or keep typing"
+- If no action was taken: "Try saying an article title, or say 'help' for options"
 """
 
 
@@ -179,6 +193,7 @@ class InterpretCommandRequest(BaseModel):
     elements: List[PageElement]
     page_title: Optional[str] = ""
     page_url: Optional[str] = ""
+    conversation_history: Optional[List[Dict[str, str]]] = []
 
 
 class InterpretCommandResponse(BaseModel):
@@ -186,6 +201,7 @@ class InterpretCommandResponse(BaseModel):
     target_index: Optional[int] = None
     value: Optional[str] = None
     explanation: str
+    suggestion: Optional[str] = None
 
 
 SIMPLIFY_SYSTEM_PROMPT = """You are an accessibility expert. Analyze the webpage and return CSS modifications to improve accessibility. Focus on:
@@ -400,8 +416,19 @@ async def interpret_command(request: InterpretCommandRequest):
         for el in request.elements[:60]
     )
 
+    # Build conversation history context
+    history_text = ""
+    if request.conversation_history:
+        history_lines = []
+        for entry in request.conversation_history[-10:]:
+            role = entry.get("role", "user")
+            text = entry.get("text", "")
+            history_lines.append(f"  {role}: {text}")
+        history_text = "Recent conversation:\n" + "\n".join(history_lines) + "\n\n"
+
     user_prompt = (
         f"Page: {request.page_title} ({request.page_url})\n\n"
+        f"{history_text}"
         f"User's voice command: \"{request.command}\"\n\n"
         f"Interactive elements on the page:\n{elements_text}\n\n"
         "What action should be taken? Return ONLY the JSON object."
@@ -431,7 +458,8 @@ async def interpret_command(request: InterpretCommandRequest):
             action=data.get("action", "none"),
             target_index=data.get("target_index"),
             value=data.get("value"),
-            explanation=data.get("explanation", "Done.")
+            explanation=data.get("explanation", "Done."),
+            suggestion=data.get("suggestion")
         )
     except Exception as e:
         return InterpretCommandResponse(

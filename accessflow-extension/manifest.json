@@ -31,6 +31,15 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "commands": {
+    "toggle-mic": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      },
+      "description": "Toggle voice input (microphone)"
+    }
+  },
   "content_scripts": [
     {
       "matches": [

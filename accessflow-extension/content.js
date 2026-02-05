@@ -257,6 +257,85 @@
     return { ok: false, message: `Unknown command. Try: "highlight search", "click login", "type email john@example.com".` };
   }
 
+  // --- Content Description & Narration helpers ---
+
+  async function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result.split(",")[1]); // strip "data:...;base64," prefix
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function fetchImageAsBase64(src) {
+    try {
+      const res  = await fetch(src, { credentials: "include" });
+      const blob = await res.blob();
+      return await blobToBase64(blob);
+    } catch (_) {
+      return null; // caller will fall back to raw URL
+    }
+  }
+
+  async function getPageImages() {
+    const imgs = Array.from(document.querySelectorAll("img"));
+    const meaningful = imgs.filter((img) => {
+      if (img.getAttribute("role") === "presentation") return false;
+      if (img.getAttribute("alt") === "") return false; // explicitly decorative
+      const rect = img.getBoundingClientRect();
+      return rect.width >= 100 && rect.height >= 100;
+    });
+
+    const results = [];
+    for (const img of meaningful) {
+      const src = img.getAttribute("src");
+      if (!src) continue;
+      const absoluteSrc = new URL(src, document.baseURI).href;
+      const base64 = await fetchImageAsBase64(absoluteSrc);
+      results.push({
+        base64: base64 || null,
+        url: base64 ? null : absoluteSrc,  // only send URL if base64 failed
+        original_alt: img.getAttribute("alt") || null
+      });
+    }
+    return results;
+  }
+
+  function getPageSections() {
+    const headingTags = ["H1", "H2", "H3", "H4", "H5", "H6"];
+    const allElements = Array.from(document.body.querySelectorAll("*"));
+    const sections = [];
+    let current = null;
+
+    for (const el of allElements) {
+      if (headingTags.includes(el.tagName)) {
+        if (current) sections.push(current);
+        current = { heading: el.textContent.trim(), texts: [] };
+      } else if (current && el.children.length === 0) {
+        // leaf node — grab its text so we don't double-count nested elements
+        const text = el.textContent.trim();
+        if (text) current.texts.push(text);
+      }
+    }
+    if (current) sections.push(current);
+
+    // If no headings found at all, treat the whole body as one section
+    if (sections.length === 0) {
+      sections.push({
+        heading: document.title || "Page Content",
+        texts: [document.body.innerText.slice(0, 3000)]
+      });
+    }
+
+    return sections.map((s) => ({
+      heading: s.heading,
+      text: s.texts.join(" ").slice(0, 1500)  // cap per-section length
+    }));
+  }
+
+  // --- end Content Description & Narration helpers ---
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg?.type === "PING") {
@@ -286,6 +365,17 @@
       if (msg?.type === "CMD") {
         const res = handleCommand(msg.cmd || "");
         sendResponse(res);
+        return true;
+      }
+      if (msg?.type === "DESCRIBE_IMAGES") {
+        getPageImages().then((images) => {
+          sendResponse({ ok: true, images });
+        });
+        return true; // keep channel open for async
+      }
+      if (msg?.type === "GET_SECTIONS") {
+        const sections = getPageSections();
+        sendResponse({ ok: true, sections, page_title: document.title, page_url: window.location.href });
         return true;
       }
       sendResponse({ ok: false, message: "Unknown message." });

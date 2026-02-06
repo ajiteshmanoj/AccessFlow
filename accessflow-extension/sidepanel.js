@@ -400,7 +400,14 @@ document.getElementById("describe-images").onclick = async () => {
     ).join("\n");
 
     log(allText);
-    speak(allText);
+
+    // Show stop button during image description
+    showNarrationControls(true);
+
+    await speak(allText);
+
+    // Hide controls after speaking completes
+    showNarrationControls(false);
   } catch (e) {
     log("Error calling describe-images API: " + e.message);
   }
@@ -544,18 +551,18 @@ function handleVoiceMessage(msg) {
   if (msg.type === "VOICE_RESULT") {
     const transcript = msg.transcript.trim();
 
-    // SOPHISTICATED ECHO CANCELLATION while allowing interrupts
+    // AGGRESSIVE ECHO CANCELLATION while allowing interrupts
     if (isSpeaking && lastSpokenText) {
       const echoScore = calculateEchoScore(transcript, lastSpokenText);
 
-      // If >40% of words match what we're saying, it's likely echo
-      if (echoScore > 0.4) {
+      // If >25% of words match what we're saying, it's likely echo (more aggressive)
+      if (echoScore > 0.25) {
         // This is echo - ignore it completely
         return;
       }
 
-      // If <40% match, it's likely a user interrupt
-      if (transcript.length > 3 && echoScore < 0.4) {
+      // If <25% match, it's likely a user interrupt
+      if (transcript.length > 3 && echoScore < 0.25) {
         stopSpeaking();
         log("(interrupted)");
       }
@@ -592,15 +599,15 @@ function handleVoiceMessage(msg) {
         // Only check echo if AI is CURRENTLY speaking
         const echoScore = calculateEchoScore(transcript, lastSpokenText);
 
-        // If it still looks like echo, don't submit
-        if (echoScore > 0.5) {
+        // If it still looks like echo, don't submit (more aggressive threshold)
+        if (echoScore > 0.3) {
           document.getElementById("cmd").value = "";
           return;
         }
       }
 
-      // Clear lastSpokenText after 3 seconds to avoid blocking future commands
-      setTimeout(() => { lastSpokenText = null; }, 3000);
+      // Clear lastSpokenText after 4 seconds to avoid blocking future commands
+      setTimeout(() => { lastSpokenText = null; }, 4000);
 
       // Don't stop listening — continuous mode keeps the mic open.
       // Just submit the command; after respond() finishes it will

@@ -56,14 +56,37 @@ def start_finger_tracker():
         return {"status": "already_running", "message": "Finger tracker is already running"}
 
     try:
-        # Start finger_tracker.py as subprocess using venv Python
-        # Don't redirect stdout/stderr so GUI window can appear
-        finger_tracker_process = subprocess.Popen(
-            [sys.executable, "finger_tracker.py"],
-            cwd=os.path.dirname(__file__) or "."
-        )
+        # Get absolute path to finger_tracker.py
+        script_dir = os.path.dirname(os.path.abspath(__file__)) or os.getcwd()
+        tracker_script = os.path.join(script_dir, "finger_tracker.py")
+
+        if not os.path.exists(tracker_script):
+            return {"status": "error", "message": f"finger_tracker.py not found at {tracker_script}"}
+
+        # Start finger_tracker.py as subprocess
+        # On Windows, use CREATE_NEW_CONSOLE to show the camera window
+        import platform
+        if platform.system() == "Windows":
+            # Windows: Create new console window so camera preview is visible
+            finger_tracker_process = subprocess.Popen(
+                [sys.executable, tracker_script],
+                cwd=script_dir,
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        else:
+            # Unix: Standard subprocess
+            finger_tracker_process = subprocess.Popen(
+                [sys.executable, tracker_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=script_dir
+            )
+
         return {"status": "started", "message": "Finger tracker started", "pid": finger_tracker_process.pid}
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error starting finger tracker: {error_detail}")
         return {"status": "error", "message": str(e)}
 
 def stop_finger_tracker():
@@ -191,7 +214,7 @@ INTERPRET_SYSTEM_PROMPT = """You are the command interpreter for AccessFlow, an 
 
 You will receive:
 - The user's spoken command
-- A list of interactive elements on the page (links, buttons, inputs) with their text and index
+- A list of interactive elements on the page, GROUPED BY PAGE REGION (e.g. MAIN CONTENT, NAV, FOOTER) and pre-sorted by relevance
 - Recent conversation history (previous commands and responses) for context
 
 Return ONLY a valid JSON object with this structure:
@@ -203,7 +226,14 @@ Return ONLY a valid JSON object with this structure:
   "suggestion": "<a short contextual follow-up suggestion for the user>"
 }
 
-COMMAND CLASSIFICATION RULES (follow these EXACTLY):
+Rules:
+- Elements are grouped by page region and pre-sorted by relevance. Element indices may be non-sequential (they are stable DOM IDs).
+- For article/headline/product/content requests, PREFER elements in MAIN CONTENT or ARTICLE regions
+- Match elements by fuzzy text similarity — the user won't say exact text
+- Prefer partial matches over no match. E.g. "exercising in cold" should match "Is exercising in the cold good for you?"
+- If no element matches at all, set action to "none" and explain what went wrong
+
+COMMAND CLASSIFICATION (follow these EXACTLY):
 
 SEARCH COMMANDS (action: "type" into search input):
 - "search for X" → Find input element (search box, text input), TYPE X into it, never click
@@ -217,18 +247,13 @@ CLICK COMMANDS (action: "click" on links/buttons):
 - "open X" → CLICK on link/button matching X
 - "press X" → CLICK on button matching X
 - "go to X" → CLICK on link matching X
-- Bare phrases like article titles → CLICK the matching link
+- Bare phrases like article titles/headlines → CLICK the matching link
 - These commands ONLY click clickable elements, NEVER type into inputs
 
 OTHER COMMANDS:
-- "highlight X" or "show me X" or "where is X" → action: "highlight"
+- "highlight X" or "show me X" or "find X" or "where is X" → action: "highlight"
 - "type X into Y" or "enter X in Y" → action: "type" into specific field Y
 - "scroll down/up" → action: "scroll"
-
-MATCHING RULES:
-- Use fuzzy text matching (partial matches OK)
-- Example: "exercising in cold" matches "Is exercising in the cold good for you?"
-- If no element matches, set action to "none"
 
 CRITICAL: Never confuse search and click commands. "search for shoes" must TYPE, "click shoes" must CLICK.
 
@@ -251,6 +276,7 @@ class PageElement(BaseModel):
     tag: str           # "a", "button", "input", etc.
     text: str          # visible text or label
     type: Optional[str] = None  # input type, if applicable
+    region: Optional[str] = "other"  # page region: nav, main, article, footer, etc.
 
 
 class InterpretCommandRequest(BaseModel):
@@ -500,11 +526,29 @@ async def interpret_command(request: InterpretCommandRequest):
             action="none", explanation="AI not configured (no OPENAI_API_KEY)."
         )
 
-    # Build the element list for the prompt (cap at 60 to stay within token limits)
-    elements_text = "\n".join(
-        f"  [{el.index}] <{el.tag}> \"{el.text}\""
-        for el in request.elements[:60]
-    )
+    # Build the element list grouped by region (cap at 120, frontend pre-sorts by priority)
+    REGION_ORDER = ["main", "article", "form", "other", "header", "nav", "sidebar", "footer"]
+    capped = request.elements[:120]
+    grouped: Dict[str, list] = {}
+    for el in capped:
+        r = el.region or "other"
+        grouped.setdefault(r, []).append(el)
+
+    region_blocks = []
+    for region in REGION_ORDER:
+        items = grouped.pop(region, [])
+        if not items:
+            continue
+        label = region.upper().replace("OTHER", "OTHER CONTENT")
+        region_blocks.append(f"--- {label} ({len(items)} items) ---")
+        for el in items:
+            region_blocks.append(f"  [{el.index}] <{el.tag}> \"{el.text}\"")
+    # Any remaining regions not in REGION_ORDER
+    for region, items in grouped.items():
+        region_blocks.append(f"--- {region.upper()} ({len(items)} items) ---")
+        for el in items:
+            region_blocks.append(f"  [{el.index}] <{el.tag}> \"{el.text}\"")
+    elements_text = "\n".join(region_blocks)
 
     # Build conversation history context
     history_text = ""

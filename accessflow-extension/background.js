@@ -25,25 +25,33 @@ chrome.commands.onCommand.addListener((command) => {
 // ========== FINGER TRACKER WEBSOCKET ==========
 let ws = null;
 let fingerTrackingActive = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAYS = [1000, 2000, 3000, 4000, 5000]; // Progressive delay
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "START_FINGER_TRACKING") {
+    reconnectAttempts = 0; // Reset retry counter on manual start
     startFingerTracking();
     sendResponse({ ok: true });
   }
   if (msg?.type === "STOP_FINGER_TRACKING") {
+    reconnectAttempts = MAX_RECONNECT_ATTEMPTS; // Prevent auto-reconnect
     stopFingerTracking();
     sendResponse({ ok: true });
   }
 });
 
 function startFingerTracking() {
-  if (ws) return; // Already connected
+  if (ws && ws.readyState === WebSocket.OPEN) return; // Already connected
+
+  console.log(`Connecting to finger tracker (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})...`);
 
   ws = new WebSocket("ws://localhost:9000");
 
   ws.onopen = () => {
     console.log("Connected to finger tracker");
+    reconnectAttempts = 0; // Reset counter on success
     fingerTrackingActive = true;
     chrome.runtime.sendMessage({ type: "FINGER_TRACKER_STATUS", active: true });
   };
@@ -63,7 +71,6 @@ function startFingerTracking() {
 
   ws.onerror = (err) => {
     console.error("Finger tracker WebSocket error:", err);
-    chrome.runtime.sendMessage({ type: "FINGER_TRACKER_ERROR", error: "Connection failed. Is finger_tracker.py running?" });
   };
 
   ws.onclose = () => {
@@ -71,6 +78,27 @@ function startFingerTracking() {
     ws = null;
     fingerTrackingActive = false;
     chrome.runtime.sendMessage({ type: "FINGER_TRACKER_STATUS", active: false });
+
+    // Auto-retry if we haven't exceeded max attempts
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      const delay = RECONNECT_DELAYS[reconnectAttempts] || 5000;
+      console.log(`Retrying connection in ${delay}ms...`);
+      chrome.runtime.sendMessage({
+        type: "FINGER_TRACKER_RETRY",
+        attempt: reconnectAttempts + 1,
+        maxAttempts: MAX_RECONNECT_ATTEMPTS
+      });
+
+      setTimeout(() => {
+        reconnectAttempts++;
+        startFingerTracking();
+      }, delay);
+    } else {
+      chrome.runtime.sendMessage({
+        type: "FINGER_TRACKER_ERROR",
+        error: "Connection failed after multiple attempts. Please restart the finger tracker."
+      });
+    }
   };
 }
 

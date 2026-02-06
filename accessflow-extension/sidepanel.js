@@ -643,6 +643,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "FINGER_TRACKER_ERROR") {
     log("Finger tracking error: " + msg.error);
   }
+  if (msg.type === "FINGER_TRACKER_RETRY") {
+    log(`Retrying connection... (attempt ${msg.attempt}/${msg.maxAttempts})`);
+  }
 });
 
 // --- end Voice Input ---
@@ -679,10 +682,10 @@ document.getElementById("finger-tracking").onclick = async () => {
       if (startData.status === "started" || startData.status === "already_running") {
         log("Finger tracker started! Point your finger at the camera.");
 
-        // Wait a moment for WebSocket server to initialize
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for WebSocket server to initialize (with auto-retry fallback)
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // Connect WebSocket from background.js
+        // Connect WebSocket from background.js (will auto-retry if needed)
         chrome.runtime.sendMessage({ type: "START_FINGER_TRACKING" });
         isFingerTrackingActive = true;
       } else {

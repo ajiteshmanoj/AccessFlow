@@ -15,7 +15,7 @@ fi
 
 # Start main backend (GPT features, voice, AND finger tracker management)
 echo "Starting main backend on http://localhost:8000..."
-python3 main.py > /tmp/accessflow-main.log 2>&1 &
+python main.py > /tmp/accessflow-main.log 2>&1 &
 MAIN_PID=$!
 
 # Save PID for later shutdown

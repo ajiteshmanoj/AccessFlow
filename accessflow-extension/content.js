@@ -90,9 +90,58 @@
     return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
   }
 
+  function getAllElementsIncludingShadow(root = document.body) {
+    const elements = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+
+    let node;
+    while (node = walker.nextNode()) {
+      elements.push(node);
+      // Traverse into shadow DOM if present
+      if (node.shadowRoot) {
+        elements.push(...getAllElementsIncludingShadow(node.shadowRoot));
+      }
+    }
+    return elements;
+  }
+
+  function isElementClickable(el) {
+    // Check if element has click-related attributes or styles
+    if (el.onclick || el.getAttribute("onclick")) return true;
+    if (el.hasAttribute("role") && ["button", "link", "menuitem", "tab"].includes(el.getAttribute("role"))) return true;
+
+    // Check computed style for cursor:pointer
+    const style = window.getComputedStyle(el);
+    if (style.cursor === "pointer") return true;
+
+    // Check for React/Vue event listeners (heuristic)
+    const attrs = el.getAttributeNames();
+    if (attrs.some(attr => attr.startsWith("@click") || attr.startsWith("v-on:") || attr.includes("onclick"))) return true;
+
+    return false;
+  }
+
   function getClickableCandidates() {
-    const nodes = Array.from(document.querySelectorAll("button, a, [role='button'], input[type='submit'], input[type='button']"));
-    return nodes.filter(n => n && n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().height > 0);
+    const allElements = getAllElementsIncludingShadow();
+
+    // Standard clickable selectors
+    const standardClickable = allElements.filter(el => {
+      const tag = el.tagName?.toLowerCase();
+      if (tag === "button" || tag === "a") return true;
+      if (tag === "input" && ["submit", "button"].includes(el.type)) return true;
+      if (el.getAttribute("role") === "button") return true;
+      return false;
+    });
+
+    // Custom clickable elements (divs/spans with handlers or cursor:pointer)
+    const customClickable = allElements.filter(el => {
+      const tag = el.tagName?.toLowerCase();
+      if (["button", "a", "input"].includes(tag)) return false; // already covered
+      return isElementClickable(el);
+    });
+
+    const allClickable = [...standardClickable, ...customClickable];
+    return allClickable.filter(n => n && n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().height > 0);
   }
 
   function findByText(query) {
@@ -104,10 +153,21 @@
     for (const el of candidates) {
       const text = normalize(el.innerText || el.getAttribute("aria-label") || el.getAttribute("value") || el.getAttribute("title"));
       if (!text) continue;
+      // Doubled base scores so tiebreakers don't override text match quality
       let score = 0;
-      if (text === q) score = 3;
-      else if (text.startsWith(q)) score = 2;
-      else if (text.includes(q)) score = 1;
+      if (text === q) score = 6;
+      else if (text.startsWith(q)) score = 4;
+      else if (text.includes(q)) score = 2;
+
+      if (score === 0) continue;
+
+      // Viewport tiebreaker
+      const rect = el.getBoundingClientRect();
+      if (isInViewport(rect)) score += 1;
+
+      // Region tiebreaker
+      const region = detectRegion(el);
+      if (region === "main" || region === "article") score += 0.5;
 
       if (score > bestScore) { bestScore = score; best = el; }
     }
@@ -117,14 +177,41 @@
   function findInputLike(query) {
     const q = normalize(query);
     const inputs = Array.from(document.querySelectorAll("input, textarea, select"));
-    // Try matching by placeholder, aria-label, label text
+
+    let best = null;
+    let bestScore = 0;
+
+    // Score each input and pick the best match
     for (const el of inputs) {
-      const ph = normalize(el.getAttribute("placeholder"));
-      const aria = normalize(el.getAttribute("aria-label"));
-      const name = normalize(el.getAttribute("name"));
-      if (ph.includes(q) || aria.includes(q) || name.includes(q)) return el;
+      const ph = normalize(el.getAttribute("placeholder") || "");
+      const aria = normalize(el.getAttribute("aria-label") || "");
+      const name = normalize(el.getAttribute("name") || "");
+      const id = normalize(el.getAttribute("id") || "");
+
+      // Check all attributes and pick the best score
+      const texts = [ph, aria, name, id].filter(t => t);
+      let score = 0;
+
+      for (const text of texts) {
+        if (text === q) {
+          score = Math.max(score, 4); // Exact match
+        } else if (text.startsWith(q)) {
+          score = Math.max(score, 3); // Starts with query
+        } else if (text.includes(q)) {
+          score = Math.max(score, 2); // Contains query
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
     }
-    // fallback: first text input
+
+    // If we found a match, return it
+    if (best) return best;
+
+    // Fallback: first text input
     return inputs.find(i => i.tagName === "TEXTAREA" || (i.tagName === "INPUT" && ["text","search","email","tel","url","password"].includes(i.type))) || null;
   }
 
@@ -132,7 +219,28 @@
     if (!el) return false;
     highlightElement(el);
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.click();
+
+    // Try multiple click methods for better compatibility
+    setTimeout(() => {
+      // Method 1: Standard click
+      el.click();
+
+      // Method 2: Dispatch mouse events (for React/Vue components)
+      const clickEvent = new MouseEvent("click", {
+        view: window,
+        bubbles: true,
+        cancelable: true,
+        composed: true  // Important for Shadow DOM
+      });
+      el.dispatchEvent(clickEvent);
+
+      // Method 3: Dispatch pointer events (modern approach)
+      const pointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true });
+      const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
+      el.dispatchEvent(pointerDown);
+      el.dispatchEvent(pointerUp);
+    }, 300);
+
     return true;
   }
 
@@ -266,14 +374,41 @@
       return { ok: true, message: `Clicked "${mClick[1]}".` };
     }
 
-    const mType = c.match(/^type\s+(.+?)\s+(.+)$/); // type <field> <text>
+    const mType = c.match(/^type\s+(.+)$/); // type <text> or type <field> <text>
     if (mType) {
-      const field = mType[1];
-      const text = cmd.trim().slice(cmd.toLowerCase().indexOf(field) + field.length).trim(); // keep original casing
-      const input = findInputLike(field);
-      if (!input) return { ok: false, message: `Couldn't find an input for "${field}".` };
-      typeInto(input, text);
-      return { ok: true, message: `Typed into "${field}".` };
+      const fullText = cmd.trim().slice(4).trim(); // Everything after "type"
+
+      // Try to split into field + text (look for space)
+      const spaceIdx = fullText.indexOf(" ");
+      if (spaceIdx > 0) {
+        const possibleField = fullText.slice(0, spaceIdx).toLowerCase();
+        const possibleText = fullText.slice(spaceIdx + 1);
+        const input = findInputLike(possibleField);
+
+        // If we found a field, use the split approach
+        if (input) {
+          typeInto(input, possibleText);
+          return { ok: true, message: `Typed into "${possibleField}".` };
+        }
+      }
+
+      // Otherwise, treat entire text as content to type into first search/text input
+      const inputs = Array.from(document.querySelectorAll("input, textarea"));
+      const searchInput = inputs.find(i => {
+        const type = (i.type || "").toLowerCase();
+        const ph = (i.getAttribute("placeholder") || "").toLowerCase();
+        const name = (i.getAttribute("name") || "").toLowerCase();
+        // Prioritize search boxes, then text inputs
+        if (type === "search" || ph.includes("search") || name.includes("search")) return true;
+        return false;
+      }) || inputs.find(i => {
+        const type = (i.type || "").toLowerCase();
+        return type === "text" || type === "" || i.tagName === "TEXTAREA";
+      });
+
+      if (!searchInput) return { ok: false, message: `Couldn't find an input field.` };
+      typeInto(searchInput, fullText);
+      return { ok: true, message: `Typed "${fullText}".` };
     }
 
     if (c === "next" && tunnelState.active) {
@@ -328,14 +463,109 @@
       return { ok: true, message: "Focused next element." };
     }
 
+    // Ordinal pattern: "first article", "second link", "third result"
+    const ordinals = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+    const ordMatch = c.match(/^(first|second|third|fourth|fifth)\s+(.+)$/);
+    if (ordMatch) {
+      const nth = ordinals[ordMatch[1]];
+      const kind = ordMatch[2]; // e.g. "article", "link", "result"
+      const tagMap = { article: "a", link: "a", button: "button", result: "a", item: "a" };
+      const targetTag = tagMap[kind] || null;
+      // Get visible elements in main/article regions
+      const allEls = window.__accessflow_elements || [];
+      const visible = allEls.filter(e => {
+        const rect = e._el.getBoundingClientRect();
+        const inMain = e.region === "main" || e.region === "article" || e.region === "other";
+        return inMain && isInViewport(rect) && (!targetTag || e.tag === targetTag);
+      });
+      if (visible.length >= nth) {
+        const target = visible[nth - 1];
+        clickElement(target._el);
+        return { ok: true, message: `Clicked ${ordMatch[1]} ${kind}: "${target.text.slice(0, 50)}".` };
+      }
+    }
+
+    // Fuzzy fallback: try matching raw input as clickable text
+    const fuzzyMatch = findByText(c);
+    if (fuzzyMatch) {
+      clickElement(fuzzyMatch);
+      const matchText = normalize(fuzzyMatch.innerText || fuzzyMatch.getAttribute("aria-label") || "").slice(0, 50);
+      return { ok: true, message: `Clicked "${matchText}".` };
+    }
+
     return { ok: false, message: `Unknown command. Try: "click login", "highlight search", "scroll down", "go back".` };
   }
 
   // --- AI Command Interpreter helpers ---
 
+  // Classify an element into a page region by walking up the DOM
+  function detectRegion(el) {
+    const regionMap = {
+      NAV: "nav", HEADER: "header", FOOTER: "footer",
+      MAIN: "main", ARTICLE: "article", ASIDE: "sidebar", FORM: "form"
+    };
+    const roleMap = {
+      navigation: "nav", banner: "header", contentinfo: "footer",
+      main: "main", complementary: "sidebar", form: "form"
+    };
+    const classHints = [
+      [/\bnav(bar|igation)?\b/i, "nav"],
+      [/\bheader\b/i, "header"],
+      [/\bfooter\b/i, "footer"],
+      [/\bmain[-_]?content\b/i, "main"],
+      [/\barticle\b/i, "article"],
+      [/\bsidebar\b/i, "sidebar"]
+    ];
+
+    let node = el;
+    for (let i = 0; i < 8 && node && node !== document.body; i++) {
+      // Check semantic tag
+      const tag = node.tagName;
+      if (regionMap[tag]) return regionMap[tag];
+      // Check ARIA role
+      const role = (node.getAttribute("role") || "").toLowerCase();
+      if (roleMap[role]) return roleMap[role];
+      // Check class/id heuristics
+      const ci = ((node.className || "") + " " + (node.id || "")).toLowerCase();
+      for (const [regex, region] of classHints) {
+        if (regex.test(ci)) return region;
+      }
+      node = node.parentElement;
+    }
+    return "other";
+  }
+
+  function isInViewport(rect) {
+    return rect.bottom > 0 && rect.top < window.innerHeight &&
+           rect.right > 0 && rect.left < window.innerWidth;
+  }
+
+  function viewportOverlapScore(rect) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const overlapX = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+    const overlapY = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+    const elArea = rect.width * rect.height;
+    if (elArea === 0) return 0;
+    return Math.min(1, (overlapX * overlapY) / elArea);
+  }
+
   function getInteractiveElements() {
-    const selectors = "a, button, [role='button'], input, select, textarea, [onclick], [tabindex]";
-    const nodes = Array.from(document.querySelectorAll(selectors));
+    const allElements = getAllElementsIncludingShadow();
+
+    // Filter for interactive elements (including Shadow DOM elements)
+    const nodes = allElements.filter(el => {
+      const tag = el.tagName?.toLowerCase();
+      // Standard interactive elements
+      if (["a", "button", "input", "select", "textarea"].includes(tag)) return true;
+      if (el.getAttribute("role") === "button") return true;
+      if (el.onclick || el.getAttribute("onclick")) return true;
+      if (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1") return true;
+      // Custom clickable elements
+      if (isElementClickable(el)) return true;
+      return false;
+    });
+
     const elements = [];
     let idx = 0;
     for (const el of nodes) {
@@ -343,26 +573,46 @@
       if (rect.width === 0 || rect.height === 0) continue;
       const text = (
         el.innerText ||
+        el.textContent ||
         el.getAttribute("aria-label") ||
         el.getAttribute("placeholder") ||
         el.getAttribute("value") ||
         el.getAttribute("title") ||
         el.getAttribute("alt") ||
         ""
-      ).trim().slice(0, 120);
+      ).trim().slice(0, 80);
       if (!text) continue;
+
+      const region = detectRegion(el);
+      const inVP = isInViewport(rect);
+      const overlap = inVP ? viewportOverlapScore(rect) : 0;
+
+      // Priority score: viewport visibility dominates, then region
+      let score = 0;
+      if (inVP) score += 50 + Math.round(overlap * 30); // 50-80 for visible
+      if (region === "main" || region === "article") score += 20;
+      else if (region === "form") score += 15;
+      else if (region === "other") score += 5;
+      // nav/footer/header/sidebar get no bonus
+
       elements.push({
         index: idx,
         tag: el.tagName.toLowerCase(),
         text,
         type: el.getAttribute("type") || null,
-        _el: el  // keep reference for execution (won't be serialized)
+        region,
+        _score: score,
+        _el: el
       });
       idx++;
     }
-    // Store for later execution
+
+    // Store ALL elements for execution (index = stable DOM order key)
     window.__accessflow_elements = elements;
-    return elements.map(({ _el, ...rest }) => rest);
+
+    // Return sorted by score descending (highest priority first)
+    const sorted = [...elements].sort((a, b) => b._score - a._score);
+    return sorted.map(({ _el, _score, ...rest }) => rest);
   }
 
   function executeAIAction(action, targetIndex, value) {
@@ -391,7 +641,22 @@
     if (action === "click") {
       highlightElement(el);
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setTimeout(() => el.click(), 400);
+      setTimeout(() => {
+        // Use multiple methods for better compatibility
+        el.click();
+        const clickEvent = new MouseEvent("click", {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        });
+        el.dispatchEvent(clickEvent);
+
+        const pointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true });
+        const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
+        el.dispatchEvent(pointerDown);
+        el.dispatchEvent(pointerUp);
+      }, 400);
       return { ok: true, message: `Clicking "${entry.text.slice(0, 50)}".` };
     }
 
@@ -662,7 +927,20 @@
       cursor.style.transform = "translate(-50%, -50%) scale(1.4)";
 
       if (elUnder && elUnder !== cursor) {
+        // Use multiple methods for better compatibility with dynamic sites
         elUnder.click();
+        const clickEvent = new MouseEvent("click", {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        });
+        elUnder.dispatchEvent(clickEvent);
+
+        const pointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true });
+        const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
+        elUnder.dispatchEvent(pointerDown);
+        elUnder.dispatchEvent(pointerUp);
       }
 
       setTimeout(() => {

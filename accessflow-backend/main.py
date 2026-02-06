@@ -191,7 +191,7 @@ INTERPRET_SYSTEM_PROMPT = """You are the command interpreter for AccessFlow, an 
 
 You will receive:
 - The user's spoken command
-- A list of interactive elements on the page (links, buttons, inputs) with their text and index
+- A list of interactive elements on the page, GROUPED BY PAGE REGION (e.g. MAIN CONTENT, NAV, FOOTER) and pre-sorted by relevance
 - Recent conversation history (previous commands and responses) for context
 
 Return ONLY a valid JSON object with this structure:
@@ -204,6 +204,8 @@ Return ONLY a valid JSON object with this structure:
 }
 
 Rules:
+- Elements are grouped by page region and pre-sorted by relevance. Element indices may be non-sequential (they are stable DOM IDs).
+- For article/headline/product/content requests, PREFER elements in MAIN CONTENT or ARTICLE regions
 - If the user says something that sounds like an article title, headline, or link text, they want to CLICK it
 - If the user says "click X" or "press X" or "open X" or "go to X", find the best matching element and click it
 - If the user says "highlight X" or "show me X" or "find X" or "where is X", find the element and highlight it
@@ -232,6 +234,7 @@ class PageElement(BaseModel):
     tag: str           # "a", "button", "input", etc.
     text: str          # visible text or label
     type: Optional[str] = None  # input type, if applicable
+    region: Optional[str] = "other"  # page region: nav, main, article, footer, etc.
 
 
 class InterpretCommandRequest(BaseModel):
@@ -481,11 +484,29 @@ async def interpret_command(request: InterpretCommandRequest):
             action="none", explanation="AI not configured (no OPENAI_API_KEY)."
         )
 
-    # Build the element list for the prompt (cap at 60 to stay within token limits)
-    elements_text = "\n".join(
-        f"  [{el.index}] <{el.tag}> \"{el.text}\""
-        for el in request.elements[:60]
-    )
+    # Build the element list grouped by region (cap at 120, frontend pre-sorts by priority)
+    REGION_ORDER = ["main", "article", "form", "other", "header", "nav", "sidebar", "footer"]
+    capped = request.elements[:120]
+    grouped: Dict[str, list] = {}
+    for el in capped:
+        r = el.region or "other"
+        grouped.setdefault(r, []).append(el)
+
+    region_blocks = []
+    for region in REGION_ORDER:
+        items = grouped.pop(region, [])
+        if not items:
+            continue
+        label = region.upper().replace("OTHER", "OTHER CONTENT")
+        region_blocks.append(f"--- {label} ({len(items)} items) ---")
+        for el in items:
+            region_blocks.append(f"  [{el.index}] <{el.tag}> \"{el.text}\"")
+    # Any remaining regions not in REGION_ORDER
+    for region, items in grouped.items():
+        region_blocks.append(f"--- {region.upper()} ({len(items)} items) ---")
+        for el in items:
+            region_blocks.append(f"  [{el.index}] <{el.tag}> \"{el.text}\"")
+    elements_text = "\n".join(region_blocks)
 
     # Build conversation history context
     history_text = ""

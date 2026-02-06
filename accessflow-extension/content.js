@@ -104,10 +104,21 @@
     for (const el of candidates) {
       const text = normalize(el.innerText || el.getAttribute("aria-label") || el.getAttribute("value") || el.getAttribute("title"));
       if (!text) continue;
+      // Doubled base scores so tiebreakers don't override text match quality
       let score = 0;
-      if (text === q) score = 3;
-      else if (text.startsWith(q)) score = 2;
-      else if (text.includes(q)) score = 1;
+      if (text === q) score = 6;
+      else if (text.startsWith(q)) score = 4;
+      else if (text.includes(q)) score = 2;
+
+      if (score === 0) continue;
+
+      // Viewport tiebreaker
+      const rect = el.getBoundingClientRect();
+      if (isInViewport(rect)) score += 1;
+
+      // Region tiebreaker
+      const region = detectRegion(el);
+      if (region === "main" || region === "article") score += 0.5;
 
       if (score > bestScore) { bestScore = score; best = el; }
     }
@@ -328,10 +339,92 @@
       return { ok: true, message: "Focused next element." };
     }
 
+    // Ordinal pattern: "first article", "second link", "third result"
+    const ordinals = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+    const ordMatch = c.match(/^(first|second|third|fourth|fifth)\s+(.+)$/);
+    if (ordMatch) {
+      const nth = ordinals[ordMatch[1]];
+      const kind = ordMatch[2]; // e.g. "article", "link", "result"
+      const tagMap = { article: "a", link: "a", button: "button", result: "a", item: "a" };
+      const targetTag = tagMap[kind] || null;
+      // Get visible elements in main/article regions
+      const allEls = window.__accessflow_elements || [];
+      const visible = allEls.filter(e => {
+        const rect = e._el.getBoundingClientRect();
+        const inMain = e.region === "main" || e.region === "article" || e.region === "other";
+        return inMain && isInViewport(rect) && (!targetTag || e.tag === targetTag);
+      });
+      if (visible.length >= nth) {
+        const target = visible[nth - 1];
+        clickElement(target._el);
+        return { ok: true, message: `Clicked ${ordMatch[1]} ${kind}: "${target.text.slice(0, 50)}".` };
+      }
+    }
+
+    // Fuzzy fallback: try matching raw input as clickable text
+    const fuzzyMatch = findByText(c);
+    if (fuzzyMatch) {
+      clickElement(fuzzyMatch);
+      const matchText = normalize(fuzzyMatch.innerText || fuzzyMatch.getAttribute("aria-label") || "").slice(0, 50);
+      return { ok: true, message: `Clicked "${matchText}".` };
+    }
+
     return { ok: false, message: `Unknown command. Try: "click login", "highlight search", "scroll down", "go back".` };
   }
 
   // --- AI Command Interpreter helpers ---
+
+  // Classify an element into a page region by walking up the DOM
+  function detectRegion(el) {
+    const regionMap = {
+      NAV: "nav", HEADER: "header", FOOTER: "footer",
+      MAIN: "main", ARTICLE: "article", ASIDE: "sidebar", FORM: "form"
+    };
+    const roleMap = {
+      navigation: "nav", banner: "header", contentinfo: "footer",
+      main: "main", complementary: "sidebar", form: "form"
+    };
+    const classHints = [
+      [/\bnav(bar|igation)?\b/i, "nav"],
+      [/\bheader\b/i, "header"],
+      [/\bfooter\b/i, "footer"],
+      [/\bmain[-_]?content\b/i, "main"],
+      [/\barticle\b/i, "article"],
+      [/\bsidebar\b/i, "sidebar"]
+    ];
+
+    let node = el;
+    for (let i = 0; i < 8 && node && node !== document.body; i++) {
+      // Check semantic tag
+      const tag = node.tagName;
+      if (regionMap[tag]) return regionMap[tag];
+      // Check ARIA role
+      const role = (node.getAttribute("role") || "").toLowerCase();
+      if (roleMap[role]) return roleMap[role];
+      // Check class/id heuristics
+      const ci = ((node.className || "") + " " + (node.id || "")).toLowerCase();
+      for (const [regex, region] of classHints) {
+        if (regex.test(ci)) return region;
+      }
+      node = node.parentElement;
+    }
+    return "other";
+  }
+
+  function isInViewport(rect) {
+    return rect.bottom > 0 && rect.top < window.innerHeight &&
+           rect.right > 0 && rect.left < window.innerWidth;
+  }
+
+  function viewportOverlapScore(rect) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const overlapX = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+    const overlapY = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+    const elArea = rect.width * rect.height;
+    if (elArea === 0) return 0;
+    return Math.min(1, (overlapX * overlapY) / elArea);
+  }
 
   function getInteractiveElements() {
     const selectors = "a, button, [role='button'], input, select, textarea, [onclick], [tabindex]";
@@ -349,20 +442,39 @@
         el.getAttribute("title") ||
         el.getAttribute("alt") ||
         ""
-      ).trim().slice(0, 120);
+      ).trim().slice(0, 80);
       if (!text) continue;
+
+      const region = detectRegion(el);
+      const inVP = isInViewport(rect);
+      const overlap = inVP ? viewportOverlapScore(rect) : 0;
+
+      // Priority score: viewport visibility dominates, then region
+      let score = 0;
+      if (inVP) score += 50 + Math.round(overlap * 30); // 50-80 for visible
+      if (region === "main" || region === "article") score += 20;
+      else if (region === "form") score += 15;
+      else if (region === "other") score += 5;
+      // nav/footer/header/sidebar get no bonus
+
       elements.push({
         index: idx,
         tag: el.tagName.toLowerCase(),
         text,
         type: el.getAttribute("type") || null,
-        _el: el  // keep reference for execution (won't be serialized)
+        region,
+        _score: score,
+        _el: el
       });
       idx++;
     }
-    // Store for later execution
+
+    // Store ALL elements for execution (index = stable DOM order key)
     window.__accessflow_elements = elements;
-    return elements.map(({ _el, ...rest }) => rest);
+
+    // Return sorted by score descending (highest priority first)
+    const sorted = [...elements].sort((a, b) => b._score - a._score);
+    return sorted.map(({ _el, _score, ...rest }) => rest);
   }
 
   function executeAIAction(action, targetIndex, value) {

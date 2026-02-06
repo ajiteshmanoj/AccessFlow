@@ -35,5 +35,6 @@ wheels/
 .DS_Store
 Thumbs.db
 
-# MediaPipe model (auto-downloaded at runtime)
-*.task
+# MediaPipe model - committed to repo for reliability
+# Auto-download was unreliable, so we include the model file
+# *.task

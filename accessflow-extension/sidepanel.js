@@ -633,10 +633,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (msg.active) {
       btn.textContent = "🛑 Stop Finger Tracking";
       btn.classList.add("active");
+      isFingerTrackingActive = true;
       log("Finger tracking started. Point at the screen to move the cursor.");
     } else {
-      btn.innerHTML = "👆 Start Finger Tracking<br><span class='pill'>hands-free navigation</span>";
+      btn.innerHTML = "👆 Finger Tracking<br><span class='pill'>hand gestures</span>";
       btn.classList.remove("active");
+      isFingerTrackingActive = false;
       log("Finger tracking stopped.");
     }
   }

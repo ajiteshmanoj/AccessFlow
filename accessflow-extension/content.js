@@ -102,13 +102,38 @@
     let bestScore = 0;
 
     for (const el of candidates) {
-      const text = normalize(el.innerText || el.getAttribute("aria-label") || el.getAttribute("value") || el.getAttribute("title"));
-      if (!text) continue;
+      // Check multiple text sources (title often has clean product/article names)
+      const textSources = [
+        el.getAttribute("title"),
+        el.getAttribute("aria-label"),
+        el.innerText,
+        el.getAttribute("value")
+      ].filter(Boolean).map(t => normalize(t)).filter(t => t.length > 0);
+
+      if (textSources.length === 0) continue;
+
       // Doubled base scores so tiebreakers don't override text match quality
       let score = 0;
-      if (text === q) score = 6;
-      else if (text.startsWith(q)) score = 4;
-      else if (text.includes(q)) score = 2;
+      for (const text of textSources) {
+        let s = 0;
+        if (text === q) s = 6;
+        else if (text.startsWith(q)) s = 4;
+        else if (text.includes(q)) s = 2;
+        if (s > score) score = s;
+      }
+
+      // Word-overlap fallback (handles truncated text like "Active Noise..." vs "Active Noise Cancellation")
+      if (score === 0) {
+        const qWords = q.split(/\s+/).filter(w => w.length > 2);
+        if (qWords.length >= 2) {
+          for (const text of textSources) {
+            const tWords = text.split(/\s+/).filter(w => w.length > 2);
+            const overlap = qWords.filter(w => tWords.some(tw => tw.includes(w) || w.includes(tw))).length;
+            const ratio = overlap / qWords.length;
+            if (ratio >= 0.5 && ratio > score) score = ratio; // 0.5 to 1.0
+          }
+        }
+      }
 
       if (score === 0) continue;
 
@@ -119,6 +144,17 @@
       // Region tiebreaker
       const region = detectRegion(el);
       if (region === "main" || region === "article") score += 0.5;
+
+      // Finger proximity tiebreaker (0.4-1.0 range, won't override text scores)
+      const fingerPos = window.__fingerPosition;
+      if (fingerPos && (Date.now() - fingerPos.timestamp) < 2000) {
+        const elCenterX = rect.left + rect.width / 2;
+        const elCenterY = rect.top + rect.height / 2;
+        const dist = Math.hypot(elCenterX - fingerPos.x, elCenterY - fingerPos.y);
+        if (dist < 300) {
+          score += 0.4 + (1.0 - 0.4) * (1 - dist / 300);
+        }
+      }
 
       if (score > bestScore) { bestScore = score; best = el; }
     }
@@ -257,6 +293,46 @@
 
   function handleCommand(cmd) {
     const c = normalize(cmd);
+
+    // Deictic commands: "click this", "select this", "this one", "what is this"
+    const fingerPos = window.__fingerPosition;
+    const fingerRecent = fingerPos && (Date.now() - fingerPos.timestamp) < 2000;
+
+    if (fingerRecent && (c === "click this" || c === "this one" || c === "select this")) {
+      const el = document.elementFromPoint(fingerPos.x, fingerPos.y);
+      if (el) {
+        // Walk up to find a clickable ancestor
+        let clickable = el;
+        for (let i = 0; i < 5 && clickable; i++) {
+          if (clickable.tagName === "A" || clickable.tagName === "BUTTON" ||
+              clickable.getAttribute("role") === "button" || clickable.onclick) {
+            break;
+          }
+          clickable = clickable.parentElement;
+        }
+        if (clickable) {
+          highlightElement(clickable);
+          clickable.scrollIntoView({ behavior: "smooth", block: "center" });
+          clickable.click();
+          const text = extractBestText(clickable).slice(0, 50);
+          return { ok: true, message: `Clicked "${text}" at finger position.` };
+        }
+      }
+      return { ok: false, message: "No clickable element found at finger position." };
+    }
+
+    if (fingerRecent && (c === "what is this" || c === "what's this" || c === "describe this")) {
+      const el = document.elementFromPoint(fingerPos.x, fingerPos.y);
+      if (el) {
+        highlightElement(el);
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        const tag = el.tagName.toLowerCase();
+        const text = extractBestText(el).slice(0, 120);
+        const role = el.getAttribute("role") || tag;
+        return { ok: true, message: `That's a ${role} element: "${text}".` };
+      }
+      return { ok: false, message: "No element found at finger position." };
+    }
 
     // Simple patterns:
     // "highlight search", "click login", "type email john@x.com"
@@ -426,6 +502,33 @@
     return Math.min(1, (overlapX * overlapY) / elArea);
   }
 
+  // Extract the most meaningful text from an element (avoids noisy innerText on product cards)
+  function extractBestText(el) {
+    // For links/buttons, prefer title attribute (e-commerce sites put clean product names here)
+    if (el.tagName === "A" || el.tagName === "BUTTON") {
+      const title = (el.getAttribute("title") || "").trim();
+      if (title.length > 3) return title;
+    }
+    const ariaLabel = (el.getAttribute("aria-label") || "").trim();
+    if (ariaLabel.length > 3) return ariaLabel;
+
+    const innerText = (el.innerText || "").trim();
+    // For links with very long innerText (product/article cards), try to find the primary text child
+    if (el.tagName === "A" && innerText.length > 100) {
+      const nameEl = el.querySelector("[class*='name' i], [class*='title' i], h1, h2, h3, h4");
+      if (nameEl) {
+        const nameText = (nameEl.innerText || "").trim();
+        if (nameText.length > 5) return nameText;
+      }
+    }
+
+    return innerText ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("value") ||
+      el.getAttribute("alt") ||
+      "";
+  }
+
   function getInteractiveElements() {
     const selectors = "a, button, [role='button'], input, select, textarea, [onclick], [tabindex]";
     const nodes = Array.from(document.querySelectorAll(selectors));
@@ -434,15 +537,7 @@
     for (const el of nodes) {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
-      const text = (
-        el.innerText ||
-        el.getAttribute("aria-label") ||
-        el.getAttribute("placeholder") ||
-        el.getAttribute("value") ||
-        el.getAttribute("title") ||
-        el.getAttribute("alt") ||
-        ""
-      ).trim().slice(0, 80);
+      const text = extractBestText(el).replace(/\s+/g, " ").slice(0, 120);
       if (!text) continue;
 
       const region = detectRegion(el);
@@ -456,6 +551,17 @@
       else if (region === "form") score += 15;
       else if (region === "other") score += 5;
       // nav/footer/header/sidebar get no bonus
+
+      // Finger proximity bonus: elements near finger cursor get +40 to +100
+      const fingerPos = window.__fingerPosition;
+      if (fingerPos && (Date.now() - fingerPos.timestamp) < 2000) {
+        const elCenterX = rect.left + rect.width / 2;
+        const elCenterY = rect.top + rect.height / 2;
+        const dist = Math.hypot(elCenterX - fingerPos.x, elCenterY - fingerPos.y);
+        if (dist < 300) {
+          score += Math.round(100 - (dist / 300) * 60); // +40 to +100
+        }
+      }
 
       elements.push({
         index: idx,
@@ -707,6 +813,7 @@
       fingerCursor.remove();
       fingerCursor = null;
     }
+    window.__fingerPosition = null;
   }
 
   let lastHoveredElement = null;
@@ -720,6 +827,9 @@
 
     cursor.style.left = `${pixelX}px`;
     cursor.style.top = `${pixelY}px`;
+
+    // Store finger position for voice command scoring and deictic commands
+    window.__fingerPosition = { x: pixelX, y: pixelY, timestamp: Date.now() };
 
     // Hover feedback — show what element is under the cursor
     const elUnder = document.elementFromPoint(pixelX, pixelY);
@@ -821,6 +931,7 @@
           // SCROLL MODE: pinch + drag
           if (msg.mode === "scroll") {
             if (fingerCursor) fingerCursor.style.display = "none";
+            window.__fingerPosition = null;
             clearHoverOutline();
 
             if (msg.scroll === "scroll_up") {
@@ -836,6 +947,7 @@
         } else {
           // No hand — hide cursor and clear outlines
           if (fingerCursor) fingerCursor.style.display = "none";
+          window.__fingerPosition = null;
           clearHoverOutline();
         }
         sendResponse({ ok: true });

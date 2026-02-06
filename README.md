@@ -28,70 +28,91 @@ INTUITION/
 
 ## Quick Start
 
-### Backend Setup
+### Prerequisites
+- Python 3.8 or higher
+- Google Chrome browser
+- Git (optional, for cloning)
 
-**Option 1: Universal startup script (recommended - works on all platforms)**
-
+### Step 1: Get the Code
 ```bash
-python start-accessflow.py
+git clone https://github.com/ajiteshmanoj/AccessFlow.git
+cd AccessFlow
 ```
 
-This script auto-detects your OS and starts all services correctly.
+Or download and extract the ZIP file.
 
-**Option 2: Platform-specific scripts**
-
-On macOS/Linux:
-```bash
-./start-accessflow.sh
-```
-
-On Windows:
-```batch
-start-accessflow.bat
-```
-
-**Option 3: Manual setup**
-
+### Step 2: Install Backend Dependencies
 ```bash
 cd accessflow-backend
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Activate virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
+# Create .env file from example
+# On Windows: copy .env.example .env
+# On macOS/Linux: cp .env.example .env
 
-# Run the server
+# Edit .env and add your OPENAI_API_KEY
+# Example: OPENAI_API_KEY=sk-proj-...
+```
+
+### Step 3: Start the Backend
+```bash
+# Go back to the main AccessFlow directory
+cd ..
+
+# Start the backend (auto-detects your OS)
+python start-accessflow.py
+```
+
+You should see: `✅ AccessFlow backend started!`
+
+**Alternative startup options:**
+
+Platform-specific scripts:
+- macOS/Linux: `./start-accessflow.sh`
+- Windows: `start-accessflow.bat`
+
+Or run manually:
+```bash
+cd accessflow-backend
 python main.py
-# OR use uvicorn directly:
-# uvicorn main:app --reload
 ```
 
 The API will be available at `http://localhost:8000`
 
 **To stop the backends:**
-
-Universal (all platforms):
 ```bash
 python stop-accessflow.py
 ```
 
-Or use platform-specific scripts:
-- macOS/Linux: `./stop-accessflow.sh`
-- Windows: `stop-accessflow.bat`
+### Step 4: Load Chrome Extension
 
-### Extension Setup
+1. Open Google Chrome and navigate to `chrome://extensions`
+2. Enable **Developer mode** (toggle in top-right corner)
+3. Click **Load unpacked**
+4. Navigate to and select the `accessflow-extension` folder
+5. The AccessFlow icon will appear in your Chrome toolbar
 
-1. Open Chrome and navigate to `chrome://extensions`
-2. Enable "Developer mode" (toggle in top right)
-3. Click "Load unpacked"
-4. Select the `accessflow-extension` folder
-5. The AccessFlow icon will appear in your toolbar
+### Step 5: Start Using AccessFlow!
+
+1. Click the AccessFlow icon to open the side panel
+2. Try these features:
+   - **Voice commands**: Click the microphone button or press `Ctrl+Shift+V` (Windows) / `Cmd+Shift+V` (Mac)
+   - **Type**: Say "type toilet paper" to search
+   - **Click**: Say "click search button"
+   - **Navigate**: Say "scroll down", "go back"
+   - **Narrate**: Say "narrate page" to hear page content
+   - **Finger tracking**: Click "Start Finger Tracker" for gesture control
 
 ## Features
 

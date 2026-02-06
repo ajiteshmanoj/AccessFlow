@@ -501,6 +501,7 @@ const micBtn = document.getElementById("mic");
 let isListening = false;
 let voicePort = null;
 let voicePortId = 0; // monotonic ID to guard against stale disconnect events
+let voiceAutoSubmitTimer = null; // Timer for auto-submitting after user stops speaking
 
 function stopListening() {
   if (isListening) playStopTone();
@@ -509,6 +510,13 @@ function stopListening() {
   if (voicePort) {
     try { voicePort.disconnect(); } catch (_) {}
     voicePort = null;
+  }
+  // Clear status and timer
+  const statusEl = document.getElementById("voice-status");
+  if (statusEl) statusEl.textContent = "";
+  if (voiceAutoSubmitTimer) {
+    clearTimeout(voiceAutoSubmitTimer);
+    voiceAutoSubmitTimer = null;
   }
 }
 
@@ -554,9 +562,34 @@ function handleVoiceMessage(msg) {
     }
 
     document.getElementById("cmd").value = msg.transcript;
+
+    // Clear any existing auto-submit timer
+    if (voiceAutoSubmitTimer) {
+      clearTimeout(voiceAutoSubmitTimer);
+      voiceAutoSubmitTimer = null;
+    }
+
+    // If user has said something substantial, set timer to auto-submit after 1.5 seconds of silence
+    if (!msg.isFinal && transcript.length > 5) {
+      // Show status that we're waiting
+      const statusEl = document.getElementById("voice-status");
+      if (statusEl) statusEl.textContent = "🎤 Listening... (pause to submit)";
+
+      voiceAutoSubmitTimer = setTimeout(() => {
+        const currentText = document.getElementById("cmd").value.trim();
+        if (currentText.length > 5 && isListening) {
+          if (statusEl) statusEl.textContent = "✅ Sending...";
+          log("(auto-submitting after pause)");
+          voiceInitiated = true;
+          document.getElementById("send").click();
+          setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 1000);
+        }
+      }, 1500); // Auto-submit after 1.5 seconds of silence
+    }
     if (msg.isFinal) {
       // Final verification before submitting
-      if (lastSpokenText) {
+      if (lastSpokenText && isSpeaking) {
+        // Only check echo if AI is CURRENTLY speaking
         const echoScore = calculateEchoScore(transcript, lastSpokenText);
 
         // If it still looks like echo, don't submit
@@ -565,6 +598,9 @@ function handleVoiceMessage(msg) {
           return;
         }
       }
+
+      // Clear lastSpokenText after 3 seconds to avoid blocking future commands
+      setTimeout(() => { lastSpokenText = null; }, 3000);
 
       // Don't stop listening — continuous mode keeps the mic open.
       // Just submit the command; after respond() finishes it will

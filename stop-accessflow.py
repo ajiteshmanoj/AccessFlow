@@ -54,28 +54,38 @@ def main():
     else:
         print("⚠️  Main backend was not running (no PID file found)")
 
-    # Clean up any orphaned finger tracker processes
-    print("\nCleaning up finger tracker processes...")
+    # Clean up any orphaned finger tracker processes and free ports
+    print("\nCleaning up finger tracker processes and freeing ports...")
     try:
         if os_type == "Windows":
-            # Windows: find and kill python processes running finger_tracker.py
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq python.exe", "/FO", "CSV"],
-                capture_output=True,
-                text=True
-            )
-            # This is a simplified approach - in production you'd parse the output
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "python.exe", "/FI", "WINDOWTITLE eq *finger_tracker*"],
-                capture_output=True,
-                check=False
-            )
+            # Windows: Kill processes using ports 8000 and 9000
+            for port in [8000, 9000]:
+                result = subprocess.run(
+                    ["netstat", "-ano"],
+                    capture_output=True,
+                    text=True
+                )
+                for line in result.stdout.split("\n"):
+                    if f":{port}" in line and "LISTENING" in line:
+                        parts = line.split()
+                        if parts:
+                            pid = parts[-1]
+                            try:
+                                subprocess.run(["taskkill", "/F", "/PID", pid],
+                                             capture_output=True, check=False)
+                                print(f"  Freed port {port} (PID: {pid})")
+                            except:
+                                pass
+
+            # Wait for ports to be released
+            import time
+            time.sleep(2)
         else:
             # Unix: use pkill
             subprocess.run(["pkill", "-f", "finger_tracker.py"],
                          capture_output=True, check=False)
     except Exception as e:
-        print(f"Note: Could not clean up finger tracker: {e}")
+        print(f"Note: Could not clean up: {e}")
 
     print("\n✅ All AccessFlow backends stopped")
 

@@ -56,16 +56,37 @@ def start_finger_tracker():
         return {"status": "already_running", "message": "Finger tracker is already running"}
 
     try:
-        # Start finger_tracker.py as subprocess using the current Python interpreter
-        # This works on both Windows (python) and Unix (python3)
-        finger_tracker_process = subprocess.Popen(
-            [sys.executable, "finger_tracker.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=os.path.dirname(__file__)
-        )
+        # Get absolute path to finger_tracker.py
+        script_dir = os.path.dirname(os.path.abspath(__file__)) or os.getcwd()
+        tracker_script = os.path.join(script_dir, "finger_tracker.py")
+
+        if not os.path.exists(tracker_script):
+            return {"status": "error", "message": f"finger_tracker.py not found at {tracker_script}"}
+
+        # Start finger_tracker.py as subprocess
+        # On Windows, use CREATE_NEW_CONSOLE to show the camera window
+        import platform
+        if platform.system() == "Windows":
+            # Windows: Create new console window so camera preview is visible
+            finger_tracker_process = subprocess.Popen(
+                [sys.executable, tracker_script],
+                cwd=script_dir,
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        else:
+            # Unix: Standard subprocess
+            finger_tracker_process = subprocess.Popen(
+                [sys.executable, tracker_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=script_dir
+            )
+
         return {"status": "started", "message": "Finger tracker started", "pid": finger_tracker_process.pid}
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error starting finger tracker: {error_detail}")
         return {"status": "error", "message": str(e)}
 
 def stop_finger_tracker():

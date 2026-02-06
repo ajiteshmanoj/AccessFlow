@@ -136,6 +136,40 @@ python stop-accessflow.py
 - `GET /health` - Server status
 - `POST /api/chat` - Process user message with page context
 
+## Troubleshooting
+
+### Windows: Port Already in Use
+
+If you get "port already in use" errors on Windows:
+
+```batch
+# Use the enhanced stop script that kills ports
+stop-accessflow.bat
+
+# Or manually free ports
+netstat -ano | findstr :8000
+netstat -ano | findstr :9000
+taskkill /F /PID <PID_NUMBER>
+```
+
+### Windows: Finger Tracker Not Starting
+
+The finger tracker will open in a **new console window** on Windows. If it doesn't appear:
+
+1. Check Windows Defender/Antivirus isn't blocking it
+2. Make sure your webcam isn't in use by another app
+3. Try running manually to see errors:
+   ```batch
+   cd accessflow-backend
+   python finger_tracker.py
+   ```
+
+### All Platforms: Extension Not Loading
+
+1. Go to `chrome://extensions`
+2. Click **Reload** (circular arrow) on AccessFlow
+3. Check browser console (F12) for errors
+
 ## License
 
 MIT License - See individual component folders for details.

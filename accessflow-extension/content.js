@@ -405,9 +405,43 @@
       highlightElement(el);
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.focus();
+
+      // Set value and trigger events
       el.value = value || "";
       el.dispatchEvent(new Event("input", { bubbles: true }));
-      return { ok: true, message: `Typed into "${entry.text.slice(0, 50)}".` };
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+
+      // Auto-submit the search after typing
+      setTimeout(() => {
+        // Method 1: Press Enter key
+        el.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", code: "Enter", keyCode: 13, which: 13,
+          bubbles: true, cancelable: true
+        }));
+        el.dispatchEvent(new KeyboardEvent("keyup", {
+          key: "Enter", code: "Enter", keyCode: 13, which: 13,
+          bubbles: true, cancelable: true
+        }));
+
+        // Method 2: Click search button
+        setTimeout(() => {
+          const searchButton =
+            el.nextElementSibling?.tagName === 'BUTTON' ? el.nextElementSibling :
+            el.closest('form')?.querySelector('button[type="submit"]') ||
+            el.closest('[class*="search"]')?.querySelector('button') ||
+            el.parentElement?.querySelector('button');
+
+          if (searchButton) {
+            searchButton.click();
+          } else {
+            // Method 3: Submit form
+            const form = el.closest('form');
+            if (form) form.submit();
+          }
+        }, 100);
+      }, 200);
+
+      return { ok: true, message: `Searching for "${value}".` };
     }
 
     return { ok: false, message: "Unknown action: " + action };

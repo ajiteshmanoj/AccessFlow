@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
+import sys
 import json
 import subprocess
 import signal
@@ -55,12 +56,11 @@ def start_finger_tracker():
         return {"status": "already_running", "message": "Finger tracker is already running"}
 
     try:
-        # Start finger_tracker.py as subprocess
+        # Start finger_tracker.py as subprocess using venv Python
+        # Don't redirect stdout/stderr so GUI window can appear
         finger_tracker_process = subprocess.Popen(
-            ["python3", "finger_tracker.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=os.path.dirname(__file__)
+            [sys.executable, "finger_tracker.py"],
+            cwd=os.path.dirname(__file__) or "."
         )
         return {"status": "started", "message": "Finger tracker started", "pid": finger_tracker_process.pid}
     except Exception as e:
@@ -203,15 +203,34 @@ Return ONLY a valid JSON object with this structure:
   "suggestion": "<a short contextual follow-up suggestion for the user>"
 }
 
-Rules:
-- If the user says something that sounds like an article title, headline, or link text, they want to CLICK it
-- If the user says "click X" or "press X" or "open X" or "go to X", find the best matching element and click it
-- If the user says "highlight X" or "show me X" or "find X" or "where is X", find the element and highlight it
-- If the user says "type X into Y" or "enter X in Y", type X into input Y
-- If the user says "scroll down/up" or navigation commands, use scroll
-- Match elements by fuzzy text similarity — the user won't say exact text
-- If no element matches at all, set action to "none" and explain what went wrong
-- Prefer partial matches over no match. E.g. "exercising in cold" should match "Is exercising in the cold good for you?"
+COMMAND CLASSIFICATION RULES (follow these EXACTLY):
+
+SEARCH COMMANDS (action: "type" into search input):
+- "search for X" → Find input element (search box, text input), TYPE X into it, never click
+- "search X" → TYPE into search box
+- "look for X" (when context indicates searching) → TYPE into search box
+- These commands ONLY type into input fields, NEVER click on links/buttons
+- If no search box exists, set action to "none"
+
+CLICK COMMANDS (action: "click" on links/buttons):
+- "click X" → Find link/button matching X, CLICK it, never type
+- "open X" → CLICK on link/button matching X
+- "press X" → CLICK on button matching X
+- "go to X" → CLICK on link matching X
+- Bare phrases like article titles → CLICK the matching link
+- These commands ONLY click clickable elements, NEVER type into inputs
+
+OTHER COMMANDS:
+- "highlight X" or "show me X" or "where is X" → action: "highlight"
+- "type X into Y" or "enter X in Y" → action: "type" into specific field Y
+- "scroll down/up" → action: "scroll"
+
+MATCHING RULES:
+- Use fuzzy text matching (partial matches OK)
+- Example: "exercising in cold" matches "Is exercising in the cold good for you?"
+- If no element matches, set action to "none"
+
+CRITICAL: Never confuse search and click commands. "search for shoes" must TYPE, "click shoes" must CLICK.
 
 Conversation context rules:
 - Use the conversation history to resolve references like "the first one", "that article", "no the other one", "do that again", "go back"
@@ -222,7 +241,7 @@ Suggestion rules — always include a short, helpful follow-up suggestion:
 - After clicking a link/article: "Say 'read page' to hear it aloud, or 'go back' to return"
 - After scrolling: "Keep scrolling, or say an article title to open it"
 - After highlighting an element: "Say 'click' to activate it, or keep browsing"
-- After typing into a field: "Say 'click' on a submit button, or keep typing"
+- After searching (typing into search box): "Results are loading, or say 'scroll down' to browse"
 - If no action was taken: "Try saying an article title, or say 'help' for options"
 """
 

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
+import sys
 import json
 import subprocess
 import signal
@@ -55,9 +56,10 @@ def start_finger_tracker():
         return {"status": "already_running", "message": "Finger tracker is already running"}
 
     try:
-        # Start finger_tracker.py as subprocess
+        # Start finger_tracker.py as subprocess using the current Python interpreter
+        # This works on both Windows (python) and Unix (python3)
         finger_tracker_process = subprocess.Popen(
-            ["python3", "finger_tracker.py"],
+            [sys.executable, "finger_tracker.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=os.path.dirname(__file__)

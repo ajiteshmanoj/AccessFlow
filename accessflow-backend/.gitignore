@@ -34,3 +34,6 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# MediaPipe model (auto-downloaded at runtime)
+*.task

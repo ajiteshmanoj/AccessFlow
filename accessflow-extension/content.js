@@ -597,36 +597,81 @@
     }
   }
 
-  function updateFingerCursor(x, y, click) {
+  let lastHoveredElement = null;
+
+  function updateFingerCursor(x, y, gesture) {
     const cursor = createFingerCursor();
     cursor.style.display = "block";
 
-    // Convert normalized coordinates (0-1) to pixel coordinates
     const pixelX = x * window.innerWidth;
     const pixelY = y * window.innerHeight;
 
     cursor.style.left = `${pixelX}px`;
     cursor.style.top = `${pixelY}px`;
-    cursor.style.transform = "translate(-50%, -50%)";
 
-    if (click) {
-      // Visual feedback on click
-      cursor.style.background = "rgba(245, 158, 11, 0.8)";
-      cursor.style.border = "3px solid #f59e0b";
-      cursor.style.transform = "translate(-50%, -50%) scale(1.3)";
+    // Hover feedback — show what element is under the cursor
+    const elUnder = document.elementFromPoint(pixelX, pixelY);
+    if (elUnder && elUnder !== cursor && elUnder !== lastHoveredElement) {
+      // Remove outline from previous element
+      if (lastHoveredElement) lastHoveredElement.style.outline = "";
+      // Subtle outline on hovered element
+      if (elUnder.tagName !== "HTML" && elUnder.tagName !== "BODY") {
+        elUnder.style.outline = "2px solid rgba(37, 99, 235, 0.4)";
+      }
+      lastHoveredElement = elUnder;
+    }
 
-      // Trigger click on element at position
-      const elementAtPoint = document.elementFromPoint(pixelX, pixelY);
-      if (elementAtPoint && elementAtPoint !== cursor) {
-        elementAtPoint.click();
+    if (gesture === "click") {
+      // Double-pinch → click
+      cursor.style.background = "rgba(34, 197, 94, 0.8)";
+      cursor.style.border = "3px solid #22c55e";
+      cursor.style.transform = "translate(-50%, -50%) scale(1.4)";
+
+      if (elUnder && elUnder !== cursor) {
+        elUnder.click();
       }
 
-      // Reset visual after 200ms
       setTimeout(() => {
         cursor.style.background = "rgba(37, 99, 235, 0.6)";
         cursor.style.border = "3px solid #2563eb";
         cursor.style.transform = "translate(-50%, -50%)";
-      }, 200);
+      }, 250);
+
+    } else if (gesture === "highlight") {
+      // Pinch + hold → highlight element
+      cursor.style.background = "rgba(245, 158, 11, 0.8)";
+      cursor.style.border = "3px solid #f59e0b";
+      cursor.style.transform = "translate(-50%, -50%) scale(1.2)";
+
+      if (elUnder && elUnder !== cursor) {
+        elUnder.style.outline = "3px solid #f59e0b";
+        elUnder.style.outlineOffset = "2px";
+      }
+
+      setTimeout(() => {
+        cursor.style.background = "rgba(37, 99, 235, 0.6)";
+        cursor.style.border = "3px solid #2563eb";
+        cursor.style.transform = "translate(-50%, -50%)";
+      }, 400);
+
+    } else if (gesture === "pinch_start" || gesture === "pinch_hold") {
+      // Pinching — show grab state
+      cursor.style.background = "rgba(251, 191, 36, 0.6)";
+      cursor.style.border = "3px solid #fbbf24";
+      cursor.style.transform = "translate(-50%, -50%) scale(0.85)";
+
+    } else {
+      // Default pointing state
+      cursor.style.background = "rgba(37, 99, 235, 0.6)";
+      cursor.style.border = "3px solid #2563eb";
+      cursor.style.transform = "translate(-50%, -50%)";
+    }
+  }
+
+  function clearHoverOutline() {
+    if (lastHoveredElement) {
+      lastHoveredElement.style.outline = "";
+      lastHoveredElement = null;
     }
   }
   // ========== END FINGER TRACKING CURSOR ==========
@@ -661,25 +706,25 @@
       // ========== FINGER TRACKING HANDLERS ==========
       if (msg?.type === "FINGER_POSITION") {
         if (msg.detected) {
-          // SCROLL MODE: Handle scrolling with 2+ fingers
+          // SCROLL MODE: pinch + drag
           if (msg.mode === "scroll") {
-            // Hide cursor in scroll mode
             if (fingerCursor) fingerCursor.style.display = "none";
+            clearHoverOutline();
 
-            // Perform scroll if action detected
             if (msg.scroll === "scroll_up") {
-              window.scrollBy({ top: -120, behavior: "smooth" });
+              window.scrollBy({ top: -100, behavior: "auto" });
             } else if (msg.scroll === "scroll_down") {
-              window.scrollBy({ top: 120, behavior: "smooth" });
+              window.scrollBy({ top: 100, behavior: "auto" });
             }
           }
-          // CURSOR MODE: Handle cursor movement and clicks
+          // CURSOR MODE: point, click, highlight
           else {
-            updateFingerCursor(msg.x, msg.y, msg.click);
+            updateFingerCursor(msg.x, msg.y, msg.gesture);
           }
         } else {
-          // Hide cursor when no finger detected
+          // No hand — hide cursor and clear outlines
           if (fingerCursor) fingerCursor.style.display = "none";
+          clearHoverOutline();
         }
         sendResponse({ ok: true });
         return true;

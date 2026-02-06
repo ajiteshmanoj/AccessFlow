@@ -39,11 +39,11 @@ MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/ha
 connected_clients = set()
 
 # ── Thresholds ───────────────────────────────────────────────────────
-PINCH_ON_THRESHOLD   = 0.10   # distance to START a pinch
-PINCH_OFF_THRESHOLD  = 0.14   # distance to END a pinch (wider gap = cleaner release)
+PINCH_ON_THRESHOLD   = 0.05   # distance to START a pinch (actual contact, below natural rest ~0.08)
+PINCH_OFF_THRESHOLD  = 0.10   # distance to END a pinch (natural rest ~0.09 crosses this)
 SCROLL_SENSITIVITY   = 0.012  # min vertical delta per frame to trigger scroll
-DOUBLE_PINCH_WINDOW  = 0.6    # seconds — max gap between two pinches for double-pinch
-TAP_MAX_DURATION     = 0.4    # seconds — max pinch duration to count as a "tap"
+DOUBLE_PINCH_WINDOW  = 1.0    # seconds — max gap between two pinches for double-pinch
+TAP_MAX_DURATION     = 0.5    # seconds — max pinch duration to count as a "tap"
 HOLD_THRESHOLD       = 0.6    # seconds — pinch held still = highlight
 HOLD_MOVE_TOLERANCE  = 0.035  # normalized — max drift to still count as "still"
 
@@ -168,7 +168,10 @@ def process_gestures(hand_landmarks, now):
     mid = midpoint(hand_landmarks)
 
     # ── Two-finger scroll (peace sign) ────────────────────────────
-    if is_two_finger_scroll(hand_landmarks) and not pinching:
+    # IMPORTANT: Don't enter scroll mode if we're mid-pinch — releasing a pinch
+    # causes index finger to extend, which can momentarily match peace sign.
+    # We need the release to reach the "Pinch just released" block below.
+    if is_two_finger_scroll(hand_landmarks) and not pinching and not pinch_was_down:
         # Use midpoint of index+middle tips for smoother tracking
         mid_y = (hand_landmarks[8].y + hand_landmarks[12].y) / 2
 
@@ -184,8 +187,6 @@ def process_gestures(hand_landmarks, now):
             scroll_dir = "scroll_up"     # hand down = page up
             scroll_anchor_y = mid_y
 
-        # Reset pinch state during scroll
-        pinch_was_down = False
         hold_fired = False
 
         return {"detected": True, "mode": "scroll", "x": x, "y": y,

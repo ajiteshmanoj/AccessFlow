@@ -30,6 +30,28 @@ INTUITION/
 
 ### Backend Setup
 
+**Option 1: Universal startup script (recommended - works on all platforms)**
+
+```bash
+python start-accessflow.py
+```
+
+This script auto-detects your OS and starts all services correctly.
+
+**Option 2: Platform-specific scripts**
+
+On macOS/Linux:
+```bash
+./start-accessflow.sh
+```
+
+On Windows:
+```batch
+start-accessflow.bat
+```
+
+**Option 3: Manual setup**
+
 ```bash
 cd accessflow-backend
 
@@ -42,13 +64,26 @@ pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Edit .env and add your OPENAI_API_KEY
 
 # Run the server
-uvicorn main:app --reload
+python main.py
+# OR use uvicorn directly:
+# uvicorn main:app --reload
 ```
 
 The API will be available at `http://localhost:8000`
+
+**To stop the backends:**
+
+Universal (all platforms):
+```bash
+python stop-accessflow.py
+```
+
+Or use platform-specific scripts:
+- macOS/Linux: `./stop-accessflow.sh`
+- Windows: `stop-accessflow.bat`
 
 ### Extension Setup
 

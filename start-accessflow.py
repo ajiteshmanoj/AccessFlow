@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 def main():
-    print("🚀 Starting AccessFlow backends...\n")
+    print(">> Starting AccessFlow backends...\n")
 
     # Detect OS
     os_type = platform.system()
@@ -24,13 +24,13 @@ def main():
     backend_dir = script_dir / "accessflow-backend"
 
     if not backend_dir.exists():
-        print(f"❌ Error: Backend directory not found at {backend_dir}")
+        print(f"[ERROR] Backend directory not found at {backend_dir}")
         sys.exit(1)
 
     # Check if .env file exists
     env_file = backend_dir / ".env"
     if not env_file.exists():
-        print("⚠️  Warning: .env file not found. Please create one with your OPENAI_API_KEY\n")
+        print("[WARNING] .env file not found. Please create one with your OPENAI_API_KEY\n")
 
     # Determine log file location based on OS
     if os_type == "Windows":
@@ -78,17 +78,17 @@ def main():
 
         # Check if process is still running
         if process.poll() is not None:
-            print("\n❌ Backend failed to start. Check logs for details:")
+            print("\n[ERROR] Backend failed to start. Check logs for details:")
             print(f"   {log_file}\n")
             sys.exit(1)
 
-        print("\n✅ AccessFlow backend started!\n")
-        print("📊 Status:")
+        print("\n[SUCCESS] AccessFlow backend started!\n")
+        print("Status:")
         print(f"   Main backend: http://localhost:8000 (PID: {process.pid})")
         print("   Finger tracker: On-demand (starts when you click the button)\n")
-        print("📝 Logs:")
+        print("Logs:")
         print(f"   Main: {log_file}\n")
-        print("🎯 Next steps:")
+        print("Next steps:")
         print("   1. Open Chrome and load the AccessFlow extension")
         print("   2. Click the extension icon to open the sidepanel")
         print("   3. Start using AccessFlow features!\n")
@@ -99,7 +99,7 @@ def main():
             print("To stop all backends, run: python stop-accessflow.py or ./stop-accessflow.sh")
 
     except Exception as e:
-        print(f"\n❌ Error starting backend: {e}")
+        print(f"\n[ERROR] Error starting backend: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

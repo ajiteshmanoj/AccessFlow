@@ -1644,6 +1644,29 @@
 
   let lastHoveredElement = null;
 
+  function findNearestClickable(px, py, radius) {
+    const clickableSelector = 'a, button, [role="button"], input, select, textarea, [onclick], [tabindex]';
+    const candidates = document.querySelectorAll(clickableSelector);
+    let best = null;
+    let bestDist = radius;
+
+    for (const el of candidates) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+
+      // Distance from point to nearest edge of the element's bounding box
+      const closestX = Math.max(rect.left, Math.min(px, rect.right));
+      const closestY = Math.max(rect.top, Math.min(py, rect.bottom));
+      const dist = Math.sqrt((px - closestX) ** 2 + (py - closestY) ** 2);
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = el;
+      }
+    }
+    return best;
+  }
+
   function updateFingerCursor(x, y, gesture) {
     const cursor = createFingerCursor();
     cursor.style.display = "block";
@@ -1670,26 +1693,50 @@
     }
 
     if (gesture === "click") {
-      // Double-pinch → click
       cursor.style.background = "rgba(34, 197, 94, 0.8)";
       cursor.style.border = "3px solid #22c55e";
       cursor.style.transform = "translate(-50%, -50%) scale(1.4)";
 
-      if (elUnder && elUnder !== cursor) {
-        // Use multiple methods for better compatibility with dynamic sites
-        elUnder.click();
-        const clickEvent = new MouseEvent("click", {
-          view: window,
-          bubbles: true,
-          cancelable: true,
-          composed: true
-        });
-        elUnder.dispatchEvent(clickEvent);
+      // Hide cursor so elementFromPoint can't return it
+      cursor.style.display = "none";
+      const rawEl = document.elementFromPoint(pixelX, pixelY);
+      cursor.style.display = "block";
 
-        const pointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true });
-        const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
-        elUnder.dispatchEvent(pointerDown);
-        elUnder.dispatchEvent(pointerUp);
+      // Walk up to find a clickable ancestor (link, button, etc.)
+      let clickTarget = null;
+      let el = rawEl;
+      while (el && el !== document.body && el !== document.documentElement) {
+        const tag = el.tagName.toLowerCase();
+        if (tag === "a" || tag === "button" || tag === "input" ||
+            tag === "select" || tag === "textarea" ||
+            el.getAttribute("role") === "button" ||
+            el.getAttribute("onclick") || el.getAttribute("tabindex")) {
+          clickTarget = el;
+          break;
+        }
+        el = el.parentElement;
+      }
+
+      // Fall back to snap-to-nearest, then raw element
+      if (!clickTarget) clickTarget = findNearestClickable(pixelX, pixelY, 40);
+      if (!clickTarget) clickTarget = rawEl;
+
+      if (clickTarget) {
+        // Full mouse event sequence: pointerdown → mousedown → pointerup → mouseup → click
+        const rect = clickTarget.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const eventOpts = { view: window, bubbles: true, cancelable: true, composed: true, clientX: cx, clientY: cy };
+
+        clickTarget.dispatchEvent(new PointerEvent("pointerdown", eventOpts));
+        clickTarget.dispatchEvent(new MouseEvent("mousedown", eventOpts));
+        clickTarget.dispatchEvent(new PointerEvent("pointerup", eventOpts));
+        clickTarget.dispatchEvent(new MouseEvent("mouseup", eventOpts));
+        clickTarget.dispatchEvent(new MouseEvent("click", eventOpts));
+        clickTarget.click();
+
+        if (clickTarget.focus) clickTarget.focus();
+        console.log("[AccessFlow] Clicked:", clickTarget.tagName, clickTarget.textContent?.slice(0, 40));
       }
 
       setTimeout(() => {
@@ -1714,12 +1761,6 @@
         cursor.style.border = "3px solid #2563eb";
         cursor.style.transform = "translate(-50%, -50%)";
       }, 400);
-
-    } else if (gesture === "pinch_start" || gesture === "pinch_hold") {
-      // Pinching — show grab state
-      cursor.style.background = "rgba(251, 191, 36, 0.6)";
-      cursor.style.border = "3px solid #fbbf24";
-      cursor.style.transform = "translate(-50%, -50%) scale(0.85)";
 
     } else {
       // Default pointing state

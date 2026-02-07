@@ -5,9 +5,8 @@ Sends real-time position + gesture events to Chrome extension via WebSocket.
 
 Gestures:
   - Point (index finger)        → cursor follows finger tip
-  - Pinch + drag up/down        → scroll (like grabbing the page)
-  - Double pinch (quick tap-tap) → click / select
-  - Pinch + hold still (~0.6s)  → highlight element under cursor
+  - L-shape (extend thumb)      → click element under cursor
+  - Peace sign (2 fingers)      → scroll up/down
 
 Requires: mediapipe >= 0.10.9, opencv-python, websockets
 Model:    hand_landmarker.task (downloaded automatically on first run)
@@ -39,21 +38,15 @@ MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/ha
 connected_clients = set()
 
 # ── Thresholds ───────────────────────────────────────────────────────
-PINCH_ON_THRESHOLD   = 0.04   # distance to START a pinch (must TOUCH to trigger)
-PINCH_OFF_THRESHOLD  = 0.07   # distance to END a pinch (closer gap for tighter control)
 SCROLL_SENSITIVITY   = 0.020  # min vertical delta per frame to trigger scroll
+THUMB_EXTEND_THRESHOLD = 0.08 # horizontal distance from thumb tip to index MCP to count as "L-shape"
 
 # ── Shared result from async callback ────────────────────────────────
 latest_result = None
 
 # ── Gesture state machine ────────────────────────────────────────────
-pinch_was_down    = False      # was pinching last frame?
-pinch_start_time  = 0.0        # when current pinch started
-pinch_start_pos   = (0.0, 0.0) # where pinch started (for drag detection)
-last_pinch_up     = 0.0        # timestamp of last pinch release (for double-pinch)
+thumb_was_out     = False      # was thumb extended last frame?
 scroll_last_y     = None       # previous y-position for scroll delta
-hold_fired        = False      # did we already fire a highlight for this pinch?
-pinch_dist_smooth = 0.0        # smoothed pinch distance (rolling average)
 
 
 def ensure_model():
@@ -97,64 +90,25 @@ def draw_landmarks(image, detection_result):
 
 
 # ── Gesture helpers ──────────────────────────────────────────────────
-def get_pinch_distance(hand_landmarks):
-    """Raw distance between thumb tip and index tip."""
-    thumb = hand_landmarks[4]
-    index = hand_landmarks[8]
-    return math.sqrt((thumb.x - index.x)**2 + (thumb.y - index.y)**2)
-
-
-def is_pinching(hand_landmarks):
+def is_thumb_extended(hand_landmarks):
     """
-    Pinch detection with hysteresis. Uses raw distance for responsiveness.
-    STRICT: Only thumb + index finger pinch. All other fingers must be DOWN.
+    Detect L-shape: thumb sticking out sideways while index points up.
+    Checks horizontal distance between thumb tip (4) and index MCP (5).
+    Works for both left and right hands (uses absolute distance).
     """
-    global pinch_was_down
-
-    # Check if middle finger is extended (peace sign / scrolling) - NOT a pinch!
-    middle_extended = is_finger_extended(hand_landmarks, 12, 10)
-    if middle_extended:
-        return False  # Peace sign detected, not a pinch
-
-    # Check if ring finger is extended (3-finger reset) - NOT a pinch!
-    ring_extended = is_finger_extended(hand_landmarks, 16, 14)
-    if ring_extended:
-        return False  # 3 fingers detected, not a pinch
-
-    # Now check thumb-index distance
-    # Note: We DON'T require index to be extended because it curls down during pinch!
-    raw_dist = get_pinch_distance(hand_landmarks)
-
-    # DEBUG: Print pinch distance
-    if raw_dist < 0.08:  # Close to threshold
-        print(f"👆 Pinch distance: {raw_dist:.4f} (threshold: {PINCH_ON_THRESHOLD:.4f})")
-
-    if pinch_was_down:
-        # Must open past OFF threshold to release (prevents jitter)
-        is_pinch = raw_dist < PINCH_OFF_THRESHOLD
-        if not is_pinch:
-            print(f"🔓 Pinch RELEASED (dist: {raw_dist:.4f})")
-        return is_pinch
-    else:
-        # Must close past ON threshold to start
-        is_pinch = raw_dist < PINCH_ON_THRESHOLD
-        if is_pinch:
-            print(f"🔒 Pinch DETECTED! (dist: {raw_dist:.4f})")
-        return is_pinch
-
-
-def midpoint(hand_landmarks):
-    """Midpoint between thumb tip and index tip (the 'grab' point)."""
-    t = hand_landmarks[4]
-    i = hand_landmarks[8]
-    return ((t.x + i.x) / 2, (t.y + i.y) / 2)
+    thumb_tip = hand_landmarks[4]
+    index_mcp = hand_landmarks[5]
+    # Thumb must also be above its IP joint (not curled under)
+    thumb_ip = hand_landmarks[3]
+    thumb_up = thumb_tip.y < thumb_ip.y + 0.02
+    horiz_dist = abs(thumb_tip.x - index_mcp.x)
+    return thumb_up and horiz_dist > THUMB_EXTEND_THRESHOLD
 
 
 def reset_gesture_state():
-    global pinch_was_down, scroll_last_y, hold_fired
-    pinch_was_down = False
+    global thumb_was_out, scroll_last_y
+    thumb_was_out = False
     scroll_last_y = None
-    hold_fired = False
 
 
 def is_finger_extended(hand_landmarks, tip_idx, pip_idx):
@@ -179,21 +133,19 @@ def process_gestures(hand_landmarks, now):
     State machine that processes hand landmarks into gesture events.
 
     Modes:
-      - Two fingers (peace sign) → scroll: hand up = scroll up, hand down = scroll down
-      - One finger (point)       → cursor follows fingertip
-      - Pinch (thumb+index)      → click
+      - Two fingers (peace sign) → scroll: hand up/down
+      - One finger (point)       → cursor follows index fingertip
+      - L-shape (thumb out)      → click element under cursor
     """
-    global pinch_was_down, pinch_start_time, pinch_start_pos
-    global last_pinch_up, scroll_last_y, hold_fired
+    global thumb_was_out, scroll_last_y
 
     index_tip = hand_landmarks[8]
     x, y = index_tip.x, index_tip.y
-    pinching = is_pinching(hand_landmarks)
+    index_up = is_finger_extended(hand_landmarks, 8, 6)
+    thumb_out = is_thumb_extended(hand_landmarks)
 
     # ── Two-finger scroll (peace sign) — simple delta tracking ────
-    # Don't enter scroll mode if we're mid-pinch — releasing a pinch
-    # causes index finger to extend, which can momentarily match peace sign.
-    if is_two_finger_scroll(hand_landmarks) and not pinching and not pinch_was_down:
+    if is_two_finger_scroll(hand_landmarks):
         mid_y = (hand_landmarks[8].y + hand_landmarks[12].y) / 2
 
         scroll_dir = None
@@ -205,7 +157,7 @@ def process_gestures(hand_landmarks, now):
                 scroll_dir = "scroll_up"
 
         scroll_last_y = mid_y
-        hold_fired = False
+        thumb_was_out = False
 
         return {"detected": True, "mode": "scroll", "x": x, "y": y,
                 "scroll": scroll_dir}
@@ -213,29 +165,20 @@ def process_gestures(hand_landmarks, now):
     # Not scrolling — reset scroll state
     scroll_last_y = None
 
-    # ── Pinch just started → INSTANT CLICK (like mouse button) ───
-    if pinching and not pinch_was_down:
-        pinch_was_down = True
-        pinch_start_time = now
-        pinch_start_pos = (x, y)
-        hold_fired = False
-        print(f"🖱️  CLICK! (instant on pinch down)")
+    # ── L-shape: thumb extends out → CLICK ────────────────────────
+    if index_up and thumb_out and not thumb_was_out:
+        thumb_was_out = True
+        print(f"🖱️  CLICK! (L-shape at {x:.3f}, {y:.3f})")
         return {"detected": True, "mode": "cursor", "x": x, "y": y,
                 "gesture": "click"}
 
-    # ── Pinch held → just track cursor (click already fired) ─────
-    if pinching and pinch_was_down:
-        return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                "gesture": "pinch_hold"}
+    # Track thumb state for edge detection (only fire once)
+    if thumb_out:
+        thumb_was_out = True
+    else:
+        thumb_was_out = False
 
-    # ── Pinch just released → no action (click already happened) ─
-    if not pinching and pinch_was_down:
-        pinch_was_down = False
-        return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                "gesture": "point"}
-
-    # ── Not pinching — just pointing ─────────────────────────────
-    pinch_was_down = False
+    # ── Default: index finger pointing → cursor ──────────────────
     return {"detected": True, "mode": "cursor", "x": x, "y": y,
             "gesture": "point"}
 
@@ -283,9 +226,9 @@ async def finger_tracker():
     with HandLandmarker.create_from_options(options) as landmarker:
         print("\n  AccessFlow Finger Tracker")
         print("  ─────────────────────────────────")
-        print("  Point (1 finger)       → move cursor")
-        print("  Peace sign (2 fingers) → scroll (move hand up/down)")
-        print("  Pinch (thumb+index)    → click instantly")
+        print("  Point (index finger)   → move cursor")
+        print("  L-shape (extend thumb) → click element")
+        print("  Peace sign (2 fingers) → scroll up/down")
         print("  Press q / ESC          → quit\n")
 
         # Create small window at top-left corner
@@ -331,35 +274,15 @@ async def finger_tracker():
                 iy = int(data["y"] * h)
                 gesture = data.get("gesture", "")
 
-                # Show pinch distance bar (debug feedback)
-                pdist = get_pinch_distance(hand_landmarks)
-                bar_w = int(min(pdist / 0.25, 1.0) * 300)
-                bar_color = (0, 255, 0) if pdist < PINCH_ON_THRESHOLD else (0, 165, 255) if pdist < PINCH_OFF_THRESHOLD else (0, 0, 255)
-                cv2.rectangle(image, (10, h - 30), (10 + bar_w, h - 15), bar_color, -1)
-                # Draw threshold markers
-                on_x = 10 + int(PINCH_ON_THRESHOLD / 0.25 * 300)
-                off_x = 10 + int(PINCH_OFF_THRESHOLD / 0.25 * 300)
-                cv2.line(image, (on_x, h - 32), (on_x, h - 13), (0, 255, 0), 2)
-                cv2.line(image, (off_x, h - 32), (off_x, h - 13), (0, 0, 255), 2)
-                state = "PINCHED" if pinch_was_down else "OPEN"
-                cv2.putText(image, f"Pinch: {pdist:.3f} [{state}]", (10, h - 35),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
                 if gesture == "click":
                     cv2.circle(image, (ix, iy), 25, (0, 255, 0), -1)
                     cv2.putText(image, "CLICK!", (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                elif gesture == "highlight":
-                    cv2.circle(image, (ix, iy), 25, (0, 200, 255), 3)
-                    cv2.putText(image, "HIGHLIGHT", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
                 elif data.get("mode") == "scroll":
                     scroll = data.get("scroll")
                     label = "SCROLL " + ("UP" if scroll == "scroll_up" else "DOWN" if scroll == "scroll_down" else "...")
                     cv2.putText(image, label, (10, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 165, 0), 2)
-                elif gesture in ("pinch_start", "pinch_hold"):
-                    cv2.circle(image, (ix, iy), 18, (255, 200, 0), 2)
                 else:
                     cv2.circle(image, (ix, iy), 8, (255, 0, 0), -1)
 

@@ -87,6 +87,17 @@
     // Clean up Inclusive Mode
     cleanupInclusiveMode();
 
+    // Stop Task Tunnel observer
+    if (tunnelObserver) {
+      tunnelObserver.disconnect();
+      tunnelObserver = null;
+    }
+    if (tunnelRefreshTimeout) {
+      clearTimeout(tunnelRefreshTimeout);
+      tunnelRefreshTimeout = null;
+    }
+    tunnelState.active = false;
+
     // Additional cleanup for other modes
     setTimeout(() => {
       document.getElementById(OVERLAY_ID)?.remove();
@@ -553,14 +564,188 @@
 
   // Task Tunnel: walk inputs in a form-like order, highlighting one at a time.
   let tunnelState = { active: false, idx: 0, inputs: [] };
+  let tunnelObserver = null;
 
-  function startTunnel() {
-    const inputs = Array.from(document.querySelectorAll("input, select, textarea"))
+  function collectTunnelInputs() {
+    const allInputs = Array.from(document.querySelectorAll("input, select, textarea"))
       .filter(el => el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0)
       .filter(el => !["hidden","submit","button","image","file","reset"].includes((el.type || "").toLowerCase()));
-    tunnelState = { active: true, idx: 0, inputs };
+
+    // Group radio buttons by name attribute (each group = 1 field)
+    const radioGroups = new Map();
+    const checkboxGroups = new Map();
+    const otherInputs = [];
+
+    for (const input of allInputs) {
+      const type = (input.type || "").toLowerCase();
+
+      if (type === "radio") {
+        const groupName = input.name || `radio_${Math.random()}`;
+        if (!radioGroups.has(groupName)) {
+          radioGroups.set(groupName, []);
+        }
+        radioGroups.get(groupName).push(input);
+      } else if (type === "checkbox") {
+        const groupName = input.name || `checkbox_${input.id || Math.random()}`;
+        // Group checkboxes with same name together
+        if (input.name) {
+          if (!checkboxGroups.has(groupName)) {
+            checkboxGroups.set(groupName, []);
+          }
+          checkboxGroups.get(groupName).push(input);
+        } else {
+          // Standalone checkbox (no group)
+          otherInputs.push(input);
+        }
+      } else {
+        otherInputs.push(input);
+      }
+    }
+
+    // Build final list: wrap groups as pseudo-elements
+    const finalInputs = [];
+
+    for (const [name, radios] of radioGroups) {
+      // Create a pseudo-element representing the entire radio group
+      finalInputs.push({
+        _isGroup: true,
+        _type: "radio",
+        _name: name,
+        _elements: radios,
+        _primary: radios[0] // Focus on first element for positioning
+      });
+    }
+
+    for (const [name, checkboxes] of checkboxGroups) {
+      if (checkboxes.length > 1) {
+        // Multiple checkboxes with same name = group
+        finalInputs.push({
+          _isGroup: true,
+          _type: "checkbox",
+          _name: name,
+          _elements: checkboxes,
+          _primary: checkboxes[0]
+        });
+      } else {
+        // Single checkbox with name = standalone
+        otherInputs.push(checkboxes[0]);
+      }
+    }
+
+    // Add all other inputs (text, textarea, select, standalone checkboxes)
+    finalInputs.push(...otherInputs);
+
+    // Sort by DOM order (top to bottom) - cache positions to avoid layout thrashing
+    const positions = new Map();
+    for (const item of finalInputs) {
+      const el = item._primary || item;
+      positions.set(item, el.getBoundingClientRect().top);
+    }
+
+    finalInputs.sort((a, b) => positions.get(a) - positions.get(b));
+
+    return finalInputs;
+  }
+
+  function refreshTunnelInputs() {
+    const currentItem = tunnelState.inputs[tunnelState.idx];
+    const newInputs = collectTunnelInputs();
+
+    // Try to maintain position based on current field
+    if (currentItem) {
+      let foundIdx = -1;
+
+      // Check if current item still exists
+      if (currentItem._isGroup) {
+        // For groups, match by name and type
+        foundIdx = newInputs.findIndex(item =>
+          item._isGroup && item._type === currentItem._type && item._name === currentItem._name
+        );
+      } else {
+        // For regular inputs, match by element reference
+        foundIdx = newInputs.indexOf(currentItem);
+      }
+
+      if (foundIdx >= 0) {
+        tunnelState.idx = foundIdx;
+      } else {
+        // Current item disappeared, stay at same index or clamp
+        tunnelState.idx = Math.min(tunnelState.idx, Math.max(0, newInputs.length - 1));
+      }
+    }
+
+    tunnelState.inputs = newInputs;
+    updateTunnelStep();
+    console.log(`[Task Tunnel] Refreshed input list: ${newInputs.length} fields found`);
+  }
+
+  let tunnelRefreshTimeout = null;
+
+  function startTunnelObserver() {
+    // Stop existing observer
+    if (tunnelObserver) {
+      tunnelObserver.disconnect();
+    }
+
+    // Create observer to detect new fields being added (debounced)
+    tunnelObserver = new MutationObserver((mutations) => {
+      if (!tunnelState.active) return;
+
+      // Check if mutations actually added/removed input elements
+      let hasRelevantChanges = false;
+      for (const mutation of mutations) {
+        // Ignore attribute changes (like class changes for highlights)
+        if (mutation.type === 'attributes') continue;
+
+        // Check if added/removed nodes contain inputs
+        const addedInputs = Array.from(mutation.addedNodes).some(node =>
+          node.nodeType === 1 && (
+            node.matches?.('input, select, textarea') ||
+            node.querySelector?.('input, select, textarea')
+          )
+        );
+        const removedInputs = Array.from(mutation.removedNodes).some(node =>
+          node.nodeType === 1 && (
+            node.matches?.('input, select, textarea') ||
+            node.querySelector?.('input, select, textarea')
+          )
+        );
+
+        if (addedInputs || removedInputs) {
+          hasRelevantChanges = true;
+          break;
+        }
+      }
+
+      // Only refresh if we detected actual input changes, and debounce
+      if (hasRelevantChanges) {
+        clearTimeout(tunnelRefreshTimeout);
+        tunnelRefreshTimeout = setTimeout(() => {
+          refreshTunnelInputs();
+        }, 300); // Wait 300ms after last change
+      }
+    });
+
+    // Start observing DOM changes (only childList, not attributes)
+    tunnelObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: false // Don't watch attribute changes (highlight class changes)
+    });
+  }
+
+  function startTunnel() {
+    tunnelState.inputs = collectTunnelInputs();
+    tunnelState.active = true;
+    tunnelState.idx = 0;
+
+    console.log(`[Task Tunnel] Started with ${tunnelState.inputs.length} fields`);
+
     showTunnelOverlay();
     focusTunnelCurrent();
+
+    // Watch for dynamic fields
+    startTunnelObserver();
   }
 
   function showTunnelOverlay() {
@@ -594,7 +779,19 @@
 
       overlay.querySelector("#af-prev").onclick = () => { tunnelState.idx = Math.max(0, tunnelState.idx - 1); focusTunnelCurrent(); };
       overlay.querySelector("#af-next").onclick = () => { tunnelState.idx = Math.min(tunnelState.inputs.length - 1, tunnelState.idx + 1); focusTunnelCurrent(); };
-      overlay.querySelector("#af-exit").onclick = () => { tunnelState.active = false; document.getElementById(OVERLAY_ID)?.remove(); };
+      overlay.querySelector("#af-exit").onclick = () => {
+        tunnelState.active = false;
+        if (tunnelObserver) {
+          tunnelObserver.disconnect();
+          tunnelObserver = null;
+        }
+        if (tunnelRefreshTimeout) {
+          clearTimeout(tunnelRefreshTimeout);
+          tunnelRefreshTimeout = null;
+        }
+        document.getElementById(OVERLAY_ID)?.remove();
+        console.log("[Task Tunnel] Exited and observer stopped");
+      };
     }
     updateTunnelStep();
   }
@@ -607,11 +804,33 @@
 
   function focusTunnelCurrent() {
     updateTunnelStep();
-    const el = tunnelState.inputs[tunnelState.idx];
-    if (!el) return;
-    highlightElement(el);
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.focus();
+    const item = tunnelState.inputs[tunnelState.idx];
+    if (!item) return;
+
+    // Clear previous highlights
+    document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
+
+    // Handle grouped inputs (radio/checkbox groups)
+    if (item._isGroup) {
+      // Highlight ALL elements in the group
+      item._elements.forEach(el => {
+        el.classList.add(HILITE_CLASS);
+        // Also highlight parent label if exists
+        const label = el.closest("label") || document.querySelector(`label[for="${el.id}"]`);
+        if (label) label.classList.add(HILITE_CLASS);
+      });
+
+      // Scroll to the first element in the group
+      item._primary.scrollIntoView({ behavior: "smooth", block: "center" });
+      item._primary.focus();
+
+      console.log(`[Task Tunnel] Focused ${item._type} group "${item._name}" with ${item._elements.length} options`);
+    } else {
+      // Regular input
+      highlightElement(item);
+      item.scrollIntoView({ behavior: "smooth", block: "center" });
+      item.focus();
+    }
   }
 
   // ========== INTELLIGENT PAGE SIMPLIFICATION ==========
@@ -1440,6 +1659,14 @@
       }
       if (msg?.type === "TUNNEL_OFF") {
         tunnelState.active = false;
+        if (tunnelObserver) {
+          tunnelObserver.disconnect();
+          tunnelObserver = null;
+        }
+        if (tunnelRefreshTimeout) {
+          clearTimeout(tunnelRefreshTimeout);
+          tunnelRefreshTimeout = null;
+        }
         document.getElementById(OVERLAY_ID)?.remove();
         document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
         sendResponse({ ok: true, message: "Task Tunnel stopped." });

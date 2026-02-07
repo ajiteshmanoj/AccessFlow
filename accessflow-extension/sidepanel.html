@@ -46,6 +46,27 @@
 
     <hr/>
 
+    <div id="profile-section">
+      <div id="profile-header">
+        <span>⚙ Your Profile</span>
+        <span id="profile-status" class="pill">No preferences saved</span>
+      </div>
+      <div id="profile-settings">
+        <label class="profile-toggle">
+          <input type="checkbox" id="pref-auto-listen" />
+          <span>Auto-start voice input</span>
+        </label>
+        <label class="profile-toggle">
+          <input type="checkbox" id="pref-auto-read" />
+          <span>Auto-read pages aloud</span>
+        </label>
+        <div id="profile-active-modes"></div>
+        <button id="clear-profile" class="danger">Clear Saved Preferences</button>
+      </div>
+    </div>
+
+    <hr/>
+
     <div class="row">
       <input id="cmd" placeholder='Try: "highlight search" or "click login"' />
       <button id="mic" title="Voice input">🎤</button>

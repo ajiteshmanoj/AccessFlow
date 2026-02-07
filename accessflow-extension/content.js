@@ -15,15 +15,97 @@
     el.textContent = cssText;
   }
 
+  // Shared function for aggressive cleanup of Inclusive Mode styles
+  function cleanupInclusiveMode() {
+    console.log("[AccessFlow] Cleaning up Inclusive Mode...");
+
+    // Stop observer and interval FIRST (critical!)
+    if (inclusiveModeObserver) {
+      console.log("[AccessFlow] Stopping Inclusive Mode observer");
+      inclusiveModeObserver.disconnect();
+      inclusiveModeObserver = null;
+    }
+    if (inclusiveModeInterval) {
+      console.log("[AccessFlow] Stopping Inclusive Mode interval");
+      clearInterval(inclusiveModeInterval);
+      inclusiveModeInterval = null;
+    }
+
+    // Wait a brief moment to ensure interval doesn't fire again
+    setTimeout(() => {
+      // Remove style elements
+      const styleEl = document.getElementById(STYLE_ID);
+      if (styleEl) {
+        console.log("[AccessFlow] Removing main style tag");
+        styleEl.remove();
+      }
+
+      // Remove styles from Shadow DOM
+      document.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) {
+          el.shadowRoot.getElementById(STYLE_ID)?.remove();
+        }
+      });
+
+      // AGGRESSIVE: Remove ALL inline styles from EVERY element
+      const allElements = document.querySelectorAll('*');
+      console.log(`[AccessFlow] Cleaning styles from ${allElements.length} elements`);
+
+      allElements.forEach(el => {
+        // Check if element has any inline styles
+        if (el.style && el.style.length > 0) {
+          // Remove all inline styles that were added by AccessFlow
+          const styledProps = Array.from(el.style);
+          styledProps.forEach(prop => {
+            const priority = el.style.getPropertyPriority(prop);
+            // Remove if it has !important (likely from our script)
+            if (priority === 'important') {
+              el.style.removeProperty(prop);
+            }
+            // Also remove specific properties we know we set
+            if (['font-size', 'line-height', 'letter-spacing', 'padding', 'min-height', 'min-width'].includes(prop)) {
+              el.style.removeProperty(prop);
+            }
+          });
+        }
+      });
+
+      // Remove ALL styles from html and body (complete reset)
+      document.documentElement.removeAttribute('style');
+      document.body.removeAttribute('style');
+
+      // Force browser to recalculate all styles (trigger reflow)
+      document.body.offsetHeight; // Reading this forces a reflow
+
+      console.log("[AccessFlow] Inclusive Mode cleanup complete!");
+    }, 50); // Small delay to ensure interval/observer are truly stopped
+  }
+
   function resetAll() {
-    document.getElementById(STYLE_ID)?.remove();
-    document.getElementById(OVERLAY_ID)?.remove();
-    document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
-    // remove inline hiding used by Focus Mode
-    document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
-      e.style.removeProperty("display");
-      e.removeAttribute("data-accessflow-hidden");
-    });
+    console.log("[AccessFlow] Starting full reset...");
+
+    // Clean up Inclusive Mode
+    cleanupInclusiveMode();
+
+    // Additional cleanup for other modes
+    setTimeout(() => {
+      document.getElementById(OVERLAY_ID)?.remove();
+      document.getElementById(SIMPLIFY_STYLE_ID)?.remove();
+
+      // Remove highlights
+      document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
+
+      // Remove inline hiding used by Focus Mode
+      document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
+        e.style.removeProperty("display");
+        e.removeAttribute("data-accessflow-hidden");
+      });
+
+      // Remove finger cursor hover outlines
+      clearHoverOutline();
+
+      console.log("[AccessFlow] Reset complete! Styles should be fully cleared.");
+    }, 60); // Slight delay after Inclusive Mode cleanup
   }
 
   // ========== ENHANCED INCLUSIVE MODE (Works on Google & Dynamic Sites) ==========
@@ -1320,28 +1402,8 @@
         return true;
       }
       if (msg?.type === "INCLUSIVE_OFF") {
-        // Stop observer
-        if (inclusiveModeObserver) {
-          inclusiveModeObserver.disconnect();
-          inclusiveModeObserver = null;
-        }
-        // Stop interval
-        if (inclusiveModeInterval) {
-          clearInterval(inclusiveModeInterval);
-          inclusiveModeInterval = null;
-        }
-        // Remove main styles
-        document.getElementById(STYLE_ID)?.remove();
-        // Remove shadow DOM styles
-        document.querySelectorAll('*').forEach(el => {
-          if (el.shadowRoot) {
-            el.shadowRoot.getElementById(STYLE_ID)?.remove();
-          }
-        });
-        // Remove direct styles from html/body
-        document.documentElement.style.removeProperty('font-size');
-        document.body.style.removeProperty('font-size');
-        document.body.style.removeProperty('line-height');
+        // Use the same aggressive cleanup as reset
+        cleanupInclusiveMode();
         sendResponse({ ok: true, message: "Inclusive Mode removed." });
         return true;
       }

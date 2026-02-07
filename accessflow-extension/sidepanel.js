@@ -211,9 +211,32 @@ document.getElementById("send").onclick = async () => {
   if (key === "stop" || key === "stop listening" || key === "nevermind" || key === "never mind") {
     voiceInitiated = false;
     stopListening();
-    log("Stopped listening.");
+    if (narrationMode) exitNarrationMode();
+    else log("Stopped listening.");
     return;
   }
+
+  // ========== NARRATION MODE ROUTING ==========
+  if (narrationMode) {
+    // Exit phrases
+    if (/\b(done|exit|quit|close|stop reading|stop narration)\b/.test(key)) {
+      stopSpeaking();
+      exitNarrationMode();
+      return;
+    }
+
+    // Page commands bypass narration mode
+    const isPageCommand = /^(click|scroll|go to|go back|go forward|highlight|tab|next element|page up|page down)\b/.test(key);
+    if (isPageCommand) {
+      resetNarrationIdleTimer();
+      // Fall through to normal command handling below
+    } else {
+      // Handle as narration follow-up
+      await handleNarrationFollowUp(cmd);
+      return;
+    }
+  }
+  // ========== END NARRATION MODE ROUTING ==========
 
   // Try the built-in command handler first
   const res = await sendToActiveTab({ type: "CMD", cmd });
@@ -352,29 +375,212 @@ async function speak(text) {
   }
 }
 
-// Narration state — tracks section-by-section progress
-let narrationSections = [];
-let narrationIndex   = 0;
+// ========== CONVERSATIONAL NARRATION STATE ==========
+let narrationMode = false;
+let narrationTopics = [];       // [{name, heading_match}]
+let narrationOverview = "";
+let narrationFullSections = []; // [{heading, level, text}]
+let narrationPageTitle = "";
+let narrationPageUrl = "";
+let narrationHistory = [];      // [{role, text}]
+let narrationHeardTopics = [];
+let narrationModeTimeout = null;
+let narrationLastResponse = "";
 
-function showNarrationControls(visible) {
-  const controls = document.getElementById("narration-controls");
-  if (controls) {
-    controls.style.display = visible ? "grid" : "none";
+function showNarrationPanel(visible) {
+  const panel = document.getElementById("narration-panel");
+  if (panel) panel.style.display = visible ? "block" : "none";
+}
+
+function buildTopicChips() {
+  const container = document.getElementById("topic-chips");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const topic of narrationTopics) {
+    const chip = document.createElement("button");
+    chip.className = "topic-chip" + (narrationHeardTopics.includes(topic.name) ? " heard" : "");
+    chip.textContent = topic.name;
+    chip.onclick = () => narrateTopic(topic);
+    container.appendChild(chip);
   }
 }
 
-function speakSection(idx) {
-  if (idx >= narrationSections.length) {
-    showNarrationControls(false);
-    log("That's the end of the page.");
+function resetNarrationIdleTimer() {
+  if (narrationModeTimeout) clearTimeout(narrationModeTimeout);
+  narrationModeTimeout = setTimeout(() => {
+    if (narrationMode) exitNarrationMode(true);
+  }, 60000);
+}
+
+function exitNarrationMode(silent = false) {
+  narrationMode = false;
+  narrationTopics = [];
+  narrationOverview = "";
+  narrationFullSections = [];
+  narrationHistory = [];
+  narrationHeardTopics = [];
+  narrationLastResponse = "";
+  if (narrationModeTimeout) { clearTimeout(narrationModeTimeout); narrationModeTimeout = null; }
+  showNarrationPanel(false);
+  if (!silent) {
+    log("Narration mode ended.");
+  }
+}
+
+function findMatchingTopic(input) {
+  const words = input.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  if (words.length === 0) return null;
+
+  let bestTopic = null;
+  let bestScore = 0;
+
+  for (const topic of narrationTopics) {
+    const topicWords = topic.name.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+    let score = 0;
+    for (const tw of topicWords) {
+      for (const iw of words) {
+        if (tw.includes(iw) || iw.includes(tw)) { score++; break; }
+      }
+    }
+    // Normalize by topic word count for fair comparison
+    const normalized = topicWords.length > 0 ? score / topicWords.length : 0;
+    if (normalized > bestScore) {
+      bestScore = normalized;
+      bestTopic = topic;
+    }
+  }
+
+  return bestScore >= 0.5 ? bestTopic : null;
+}
+
+function findSectionForTopic(topic) {
+  // Try exact heading match first
+  let section = narrationFullSections.find(s =>
+    s.heading.toLowerCase() === topic.heading_match.toLowerCase()
+  );
+  if (section) return section;
+
+  // Fuzzy match
+  const matchWords = topic.heading_match.toLowerCase().split(/\s+/);
+  section = narrationFullSections.find(s => {
+    const hWords = s.heading.toLowerCase().split(/\s+/);
+    const overlap = matchWords.filter(w => hWords.some(hw => hw.includes(w) || w.includes(hw))).length;
+    return overlap >= Math.ceil(matchWords.length * 0.5);
+  });
+  return section || null;
+}
+
+async function narrateTopic(topic) {
+  resetNarrationIdleTimer();
+  const section = findSectionForTopic(topic);
+  if (!section) {
+    await respond(`I couldn't find the section for "${topic.name}". Try another topic.`);
     return;
   }
-  const section = narrationSections[idx];
-  log(`[${section.heading}] ${section.text}`);
-  speak(section.heading + ". " + section.text);
-  narrationIndex = idx + 1;
-  showNarrationControls(true);
+
+  log(`Narrating: ${topic.name}...`);
+
+  try {
+    const apiRes = await fetch(`${BACKEND}/api/narrate-topic`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic_name: topic.name,
+        section_text: section.text,
+        conversation_history: narrationHistory.slice(-6),
+        heard_topics: narrationHeardTopics,
+        available_topics: narrationTopics.map(t => t.name)
+      })
+    });
+    const data = await apiRes.json();
+
+    if (!narrationHeardTopics.includes(topic.name)) {
+      narrationHeardTopics.push(topic.name);
+    }
+    buildTopicChips();
+
+    const fullResponse = data.narration + " " + data.follow_up;
+    narrationLastResponse = fullResponse;
+    narrationHistory.push({ role: "assistant", text: fullResponse });
+
+    await respond(fullResponse);
+  } catch (e) {
+    await respond("Error narrating topic: " + e.message);
+  }
 }
+
+async function readAllTopicsSequentially() {
+  resetNarrationIdleTimer();
+  for (const topic of narrationTopics) {
+    if (!narrationMode) break; // User exited
+    if (narrationHeardTopics.includes(topic.name)) continue;
+    await narrateTopic(topic);
+    if (!narrationMode) break;
+  }
+  if (narrationMode) {
+    await respond("That covers everything on this page. Say 'done' when you're finished.");
+  }
+}
+
+async function handleNarrationFollowUp(cmd) {
+  resetNarrationIdleTimer();
+  const lower = cmd.toLowerCase().trim();
+
+  // "everything" / "all" / "read all"
+  if (/\b(everything|all|read all)\b/.test(lower)) {
+    narrationHistory.push({ role: "user", text: cmd });
+    await readAllTopicsSequentially();
+    return;
+  }
+
+  // "topics" / "options" / "menu" / "what can i hear"
+  if (/\b(topics|options|menu|what can i hear|list)\b/.test(lower)) {
+    narrationHistory.push({ role: "user", text: cmd });
+    const available = narrationTopics
+      .filter(t => !narrationHeardTopics.includes(t.name))
+      .map(t => t.name);
+    const msg = available.length > 0
+      ? "Available topics: " + available.join(", ") + ". What would you like to hear about?"
+      : "You've heard all the topics! Say 'done' to exit.";
+    narrationLastResponse = msg;
+    narrationHistory.push({ role: "assistant", text: msg });
+    await respond(msg);
+    return;
+  }
+
+  // "repeat" / "again" / "say that again"
+  if (/\b(repeat|again|say that again)\b/.test(lower)) {
+    if (narrationLastResponse) {
+      await respond(narrationLastResponse);
+    } else {
+      await respond(narrationOverview);
+    }
+    return;
+  }
+
+  // Try to match a topic
+  const matchedTopic = findMatchingTopic(cmd);
+  if (matchedTopic) {
+    narrationHistory.push({ role: "user", text: cmd });
+    await narrateTopic(matchedTopic);
+    return;
+  }
+
+  // Free-form follow-up about last topic — send to narrate-topic with conversation context
+  narrationHistory.push({ role: "user", text: cmd });
+  const lastHeard = narrationHeardTopics[narrationHeardTopics.length - 1];
+  if (lastHeard) {
+    const topic = narrationTopics.find(t => t.name === lastHeard);
+    if (topic) {
+      await narrateTopic(topic);
+      return;
+    }
+  }
+
+  // Fallback
+  await respond("I didn't catch that. You can say a topic name, 'read everything', 'topics' to see the list, or 'done' to exit.");
+}
+// ========== END CONVERSATIONAL NARRATION ==========
 
 document.getElementById("describe-images").onclick = async () => {
   log("Looking for images on this page...");
@@ -407,53 +613,66 @@ document.getElementById("describe-images").onclick = async () => {
 };
 
 document.getElementById("narrate-page").onclick = async () => {
-  log("Reading page content...");
-  narrationSections = [];
-  narrationIndex = 0;
-  showNarrationControls(false);
+  log("Analyzing page...");
+  exitNarrationMode(true);
 
-  const res = await sendToActiveTab({ type: "GET_SECTIONS" });
-  if (!res?.ok) { log(res?.message || "Could not access the page."); return; }
+  // Fetch brief sections + full sections in parallel
+  const [briefRes, fullRes] = await Promise.all([
+    sendToActiveTab({ type: "GET_SECTIONS" }),
+    sendToActiveTab({ type: "GET_FULL_SECTIONS" })
+  ]);
 
-  const sections  = res.sections || [];
-  const pageTitle = res.page_title || "";
-  const pageUrl   = res.page_url  || "";
+  if (!briefRes?.ok || !fullRes?.ok) {
+    log(briefRes?.message || fullRes?.message || "Could not access the page.");
+    return;
+  }
+
+  const sections = briefRes.sections || [];
+  narrationFullSections = fullRes.sections || [];
+  narrationPageTitle = briefRes.page_title || "";
+  narrationPageUrl = briefRes.page_url || "";
 
   if (sections.length === 0) { log("No content found on this page."); return; }
 
-  log("Generating narration...");
+  log("Generating overview...");
 
   try {
-    const resp = await fetch(`${BACKEND}/api/narrate-page`, {
+    const resp = await fetch(`${BACKEND}/api/narrate-overview`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sections, page_title: pageTitle, page_url: pageUrl })
+      body: JSON.stringify({
+        sections,
+        page_title: narrationPageTitle,
+        page_url: narrationPageUrl
+      })
     });
     const data = await resp.json();
-    const narration = data.narration || "";
 
-    // Split narration into sections by numbered lines (1. ... 2. ... etc.)
-    const parts = narration.split(/\n(?=\d+\.)/).map(s => s.trim()).filter(Boolean);
-    narrationSections = parts.map((part, i) => ({
-      heading: `Part ${i + 1}`,
-      text: part
-    }));
+    narrationOverview = data.overview || "Here's what's on this page.";
+    narrationTopics = data.topics || [];
+    narrationMode = true;
+    narrationHistory = [{ role: "assistant", text: narrationOverview }];
+    narrationLastResponse = narrationOverview;
 
-    // Speak the first section immediately
-    speakSection(0);
+    buildTopicChips();
+    showNarrationPanel(true);
+    resetNarrationIdleTimer();
+
+    await respond(narrationOverview);
   } catch (e) {
-    log("Error calling narrate-page API: " + e.message);
+    log("Error calling narrate-overview API: " + e.message);
   }
 };
 
-document.getElementById("next-section").onclick = () => {
-  speakSection(narrationIndex);
+document.getElementById("read-all").onclick = async () => {
+  if (narrationMode) {
+    await readAllTopicsSequentially();
+  }
 };
 
-document.getElementById("stop-speaking").onclick = () => {
+document.getElementById("narration-done").onclick = () => {
   stopSpeaking();
-  showNarrationControls(false);
-  log("Narration stopped.");
+  exitNarrationMode();
 };
 
 // --- end Content Description & Narration ---

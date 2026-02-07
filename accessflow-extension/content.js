@@ -708,6 +708,38 @@
     }));
   }
 
+  function getFullPageSections() {
+    const headingTags = ["H1", "H2", "H3", "H4", "H5", "H6"];
+    const allElements = Array.from(document.body.querySelectorAll("*"));
+    const sections = [];
+    let current = null;
+
+    for (const el of allElements) {
+      if (headingTags.includes(el.tagName)) {
+        if (current) sections.push(current);
+        current = { heading: el.textContent.trim(), level: parseInt(el.tagName[1]), texts: [] };
+      } else if (current && el.children.length === 0) {
+        const text = el.textContent.trim();
+        if (text) current.texts.push(text);
+      }
+    }
+    if (current) sections.push(current);
+
+    if (sections.length === 0) {
+      sections.push({
+        heading: document.title || "Page Content",
+        level: 1,
+        texts: [document.body.innerText.slice(0, 5000)]
+      });
+    }
+
+    return sections.map((s) => ({
+      heading: s.heading,
+      level: s.level,
+      text: s.texts.join(" ").slice(0, 5000)
+    }));
+  }
+
   // --- end Content Description & Narration helpers ---
 
   // --- Voice Input (Speech-to-Text) via port ---
@@ -997,6 +1029,11 @@
       }
       if (msg?.type === "GET_SECTIONS") {
         const sections = getPageSections();
+        sendResponse({ ok: true, sections, page_title: document.title, page_url: window.location.href });
+        return true;
+      }
+      if (msg?.type === "GET_FULL_SECTIONS") {
+        const sections = getFullPageSections();
         sendResponse({ ok: true, sections, page_title: document.title, page_url: window.location.href });
         return true;
       }

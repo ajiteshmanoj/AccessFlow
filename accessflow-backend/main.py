@@ -166,6 +166,37 @@ class NarratePageResponse(BaseModel):
     narration: str
 
 
+# --- Conversational Narration models ---
+
+class NarrateTopic(BaseModel):
+    name: str
+    heading_match: str
+
+
+class NarrateOverviewRequest(BaseModel):
+    sections: List[PageSection]
+    page_title: Optional[str] = ""
+    page_url: Optional[str] = ""
+
+
+class NarrateOverviewResponse(BaseModel):
+    overview: str
+    topics: List[NarrateTopic]
+
+
+class NarrateTopicRequest(BaseModel):
+    topic_name: str
+    section_text: str
+    conversation_history: Optional[List[Dict[str, str]]] = []
+    heard_topics: Optional[List[str]] = []
+    available_topics: Optional[List[str]] = []
+
+
+class NarrateTopicResponse(BaseModel):
+    narration: str
+    follow_up: str
+
+
 # ========== INTELLIGENT PAGE SIMPLIFICATION ==========
 
 class SimplifyRequest(BaseModel):
@@ -468,6 +499,128 @@ async def narrate_page(request: NarratePageRequest):
         narration = f"Could not narrate this page: {str(e)}"
 
     return NarratePageResponse(narration=narration)
+
+
+# ========== CONVERSATIONAL NARRATION ENDPOINTS ==========
+
+@app.post("/api/narrate-overview", response_model=NarrateOverviewResponse)
+async def narrate_overview(request: NarrateOverviewRequest):
+    """
+    Analyze page sections and return a natural overview with available topics.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured in .env")
+
+    client = OpenAI(api_key=api_key)
+
+    sections_text = "\n".join(
+        f"[{s.heading}]\n{s.text[:300]}" for s in request.sections
+    )
+
+    prompt = (
+        f"Page title: {request.page_title}\n"
+        f"Page URL: {request.page_url}\n\n"
+        f"Page sections:\n{sections_text}\n\n"
+        "You are a friendly guide helping a user explore this webpage. "
+        "Analyze the page and return a JSON object with:\n"
+        "1. \"overview\": A natural 2-3 sentence summary of what this page is about, "
+        "ending with \"What would you like to hear about?\"\n"
+        "2. \"topics\": An array of the main topics/sections available, each with:\n"
+        "   - \"name\": A clean, short topic name (e.g. \"Career\" not \"Career and filmography\")\n"
+        "   - \"heading_match\": The original section heading it maps to\n\n"
+        "Keep topic names to 1-3 words. Merge related small sections into one topic. "
+        "Aim for 3-8 topics total.\n\n"
+        "Return ONLY valid JSON, no markdown."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.3
+        )
+        response_text = response.choices[0].message.content.strip()
+
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        data = json.loads(response_text)
+        topics = [NarrateTopic(**t) for t in data.get("topics", [])]
+        return NarrateOverviewResponse(
+            overview=data.get("overview", "Here's what's on this page."),
+            topics=topics
+        )
+    except Exception as e:
+        return NarrateOverviewResponse(
+            overview=f"This is a page titled {request.page_title}. What would you like to hear about?",
+            topics=[NarrateTopic(name=s.heading[:30], heading_match=s.heading) for s in request.sections[:8]]
+        )
+
+
+@app.post("/api/narrate-topic", response_model=NarrateTopicResponse)
+async def narrate_topic(request: NarrateTopicRequest):
+    """
+    Narrate a specific topic section naturally and suggest what to hear next.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured in .env")
+
+    client = OpenAI(api_key=api_key)
+
+    # Build conversation context
+    history_text = ""
+    if request.conversation_history:
+        history_lines = [f"{e.get('role','user')}: {e.get('text','')}" for e in request.conversation_history[-6:]]
+        history_text = "Previous conversation:\n" + "\n".join(history_lines) + "\n\n"
+
+    # Build available topics hint
+    remaining = [t for t in request.available_topics if t not in request.heard_topics and t != request.topic_name]
+    remaining_text = ", ".join(remaining[:4]) if remaining else "no other topics"
+
+    prompt = (
+        f"{history_text}"
+        f"Topic: {request.topic_name}\n\n"
+        f"Content:\n{request.section_text[:4000]}\n\n"
+        f"Other available topics the user hasn't heard yet: {remaining_text}\n\n"
+        "You are a friendly guide narrating this topic for a user with accessibility needs. "
+        "Return a JSON object with:\n"
+        "1. \"narration\": A natural 4-6 sentence summary of this topic. Be conversational, "
+        "not robotic. Include the most interesting or important facts.\n"
+        "2. \"follow_up\": A short 1-sentence suggestion of what to hear next, mentioning "
+        "1-2 of the remaining topics. If no topics remain, say something like "
+        "\"That covers everything! Say 'done' when you're finished.\"\n\n"
+        "Return ONLY valid JSON, no markdown."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=350,
+            temperature=0.4
+        )
+        response_text = response.choices[0].message.content.strip()
+
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        data = json.loads(response_text)
+        return NarrateTopicResponse(
+            narration=data.get("narration", "Here's what I found about this topic."),
+            follow_up=data.get("follow_up", "What else would you like to know?")
+        )
+    except Exception as e:
+        return NarrateTopicResponse(
+            narration=request.section_text[:500],
+            follow_up="What else would you like to hear about?"
+        )
 
 
 # ========== AI COMMAND INTERPRETER ENDPOINT ==========

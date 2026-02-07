@@ -338,6 +338,12 @@ async function speak(text) {
   isSpeaking = true;
   lastSpokenText = text.toLowerCase();  // Track for echo filtering
 
+  // Turn off mic while speaking to prevent echo
+  shouldResumeListening = isListening;
+  if (isListening) {
+    stopListening();
+  }
+
   try {
     const res = await fetch(`${BACKEND}/api/tts`, {
       method: "POST",
@@ -373,6 +379,12 @@ async function speak(text) {
     isSpeaking = false;
     setTimeout(() => { lastSpokenText = ""; }, 2000);
   }
+
+  // Resume listening after speaking completes
+  if (shouldResumeListening) {
+    shouldResumeListening = false;
+    await startListening();
+  }
 }
 
 // ========== CONVERSATIONAL NARRATION STATE ==========
@@ -387,9 +399,61 @@ let narrationHeardTopics = [];
 let narrationModeTimeout = null;
 let narrationLastResponse = "";
 
+// ========== IMAGE DESCRIPTION STATE ==========
+let imageDescriptions = [];     // Array of {description} objects
+let currentImageIndex = 0;
+let isDescribingImages = false;
+
 function showNarrationPanel(visible) {
   const panel = document.getElementById("narration-panel");
   if (panel) panel.style.display = visible ? "block" : "none";
+}
+
+function showImageDescriptionControls(visible) {
+  const controls = document.getElementById("image-description-controls");
+  if (controls) controls.style.display = visible ? "block" : "none";
+}
+
+async function describeCurrentImage() {
+  if (currentImageIndex >= imageDescriptions.length) {
+    // All images described
+    isDescribingImages = false;
+    showImageDescriptionControls(false);
+    log("All images described.");
+    return;
+  }
+
+  const desc = imageDescriptions[currentImageIndex];
+  const imageText = `Image ${currentImageIndex + 1} of ${imageDescriptions.length}: ${desc.description}`;
+
+  log(imageText);
+
+  await speak(imageText);
+
+  // After speaking completes, automatically move to next image if still in description mode
+  if (isDescribingImages) {
+    currentImageIndex++;
+    if (currentImageIndex < imageDescriptions.length) {
+      // Small delay before next image
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (isDescribingImages) {
+        await describeCurrentImage();
+      }
+    } else {
+      // All done
+      isDescribingImages = false;
+      showImageDescriptionControls(false);
+      log("All images described.");
+    }
+  }
+}
+
+function stopImageDescription() {
+  isDescribingImages = false;
+  imageDescriptions = [];
+  currentImageIndex = 0;
+  stopSpeaking();
+  showImageDescriptionControls(false);
 }
 
 function buildTopicChips() {
@@ -601,20 +665,16 @@ document.getElementById("describe-images").onclick = async () => {
     });
     const data = await resp.json();
 
-    const allText = data.descriptions.map((d, i) =>
-      `Image ${i + 1}: ${d.description}`
-    ).join("\n");
+    // Initialize image description state
+    imageDescriptions = data.descriptions || [];
+    currentImageIndex = 0;
+    isDescribingImages = true;
 
-    log(allText);
-
-    // Show stop button during image description
-    showNarrationControls(true);
-
-    await speak(allText);
-
-    // Hide controls after speaking completes
-    showNarrationControls(false);
+    // Show controls and start describing images sequentially
+    showImageDescriptionControls(true);
+    await describeCurrentImage();
   } catch (e) {
+    stopImageDescription();
     log("Error calling describe-images API: " + e.message);
   }
 };
@@ -682,6 +742,28 @@ document.getElementById("narration-done").onclick = () => {
   exitNarrationMode();
 };
 
+document.getElementById("next-image").onclick = async () => {
+  if (!isDescribingImages) return;
+
+  stopSpeaking();
+  currentImageIndex++;
+
+  if (currentImageIndex >= imageDescriptions.length) {
+    // No more images
+    isDescribingImages = false;
+    showImageDescriptionControls(false);
+    log("All images described.");
+  } else {
+    // Describe next image
+    await describeCurrentImage();
+  }
+};
+
+document.getElementById("stop-image-description").onclick = () => {
+  stopImageDescription();
+  log("Image description stopped.");
+};
+
 // --- end Content Description & Narration ---
 
 // --- Voice Input (Speech-to-Text) ---
@@ -728,6 +810,7 @@ let isListening = false;
 let voicePort = null;
 let voicePortId = 0; // monotonic ID to guard against stale disconnect events
 let voiceAutoSubmitTimer = null; // Timer for auto-submitting after user stops speaking
+let shouldResumeListening = false; // Track if we should resume listening after speaking
 
 function stopListening() {
   if (isListening) playStopTone();
@@ -880,6 +963,12 @@ micBtn.onclick = async () => {
   if (isListening) {
     stopListening();
   } else {
+    // If turning mic on while speaking, interrupt the speech
+    if (isSpeaking) {
+      stopSpeaking();
+      shouldResumeListening = false; // Don't auto-resume after interruption
+      log("(interrupted)");
+    }
     await startListening();
   }
 };

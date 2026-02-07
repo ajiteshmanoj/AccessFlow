@@ -398,6 +398,12 @@ document.getElementById("send").onclick = async () => {
   const cmd = document.getElementById("cmd").value.trim();
   if (!cmd) return;
 
+  // Debug logging for duplicate detection
+  console.log("[AccessFlow] Send clicked, command:", cmd, "timestamp:", Date.now());
+
+  // Clear input box immediately for next command
+  document.getElementById("cmd").value = "";
+
   // Check if the command matches a panel button
   const key = cmd.toLowerCase().replace(/\s+/g, " ").trim();
   const btnId = PANEL_COMMANDS[key];
@@ -442,6 +448,119 @@ document.getElementById("send").onclick = async () => {
     }
   }
   // ========== END NARRATION MODE ROUTING ==========
+
+  // ========== EXTENSION FEATURE COMMANDS ==========
+  // Check if command is for extension features (before webpage commands)
+  const normalized = cmd.toLowerCase().trim();
+
+  // Command aliases for natural language variations
+  const extensionCommandAliases = {
+    'inclusive mode': ['inclusive', 'inclusive mode', 'turn on inclusive', 'enable inclusive', 'activate inclusive'],
+    'focus mode': ['focus', 'focus mode', 'turn on focus', 'enable focus', 'activate focus'],
+    'task tunnel': ['task tunnel', 'task mode', 'form mode', 'enable task tunnel', 'start task tunnel'],
+    'simplify page': ['simplify', 'simplify page', 'make simpler', 'simplify this page'],
+    'read page': ['read page', 'read this page', 'read aloud', 'start reading', 'narrate page'],
+    'describe images': ['describe images', 'describe pictures', 'explain images', 'what are the images'],
+    'reset page': ['reset', 'reset page', 'undo changes', 'restore page'],
+    'finger tracking': ['finger tracking', 'start finger tracking', 'hand tracking', 'gesture control'],
+    'stop finger tracking': ['stop finger tracking', 'stop tracking', 'stop gestures'],
+    'bigger text': ['bigger text', 'increase text', 'larger font', 'make text bigger'],
+    'smaller text': ['smaller text', 'decrease text', 'smaller font', 'make text smaller'],
+    'help': ['help', 'what can i say', 'commands', 'show commands']
+  };
+
+  // Find matching extension command
+  for (const [canonical, aliases] of Object.entries(extensionCommandAliases)) {
+    if (aliases.some(alias => normalized.includes(alias))) {
+      // Execute extension command
+      let executed = false;
+      let message = '';
+
+      switch(canonical) {
+        case 'inclusive mode':
+          document.getElementById("inclusive").click();
+          message = isInclusiveModeActive ? "Inclusive Mode activated" : "Inclusive Mode deactivated";
+          executed = true;
+          break;
+        case 'focus mode':
+          document.getElementById("focus").click();
+          message = isFocusModeActive ? "Focus Mode activated" : "Focus Mode deactivated";
+          executed = true;
+          break;
+        case 'task tunnel':
+          document.getElementById("tunnel").click();
+          message = isTunnelModeActive ? "Task Tunnel started" : "Task Tunnel stopped";
+          executed = true;
+          break;
+        case 'simplify page':
+          document.getElementById("simplify").click();
+          message = "Page simplification applied";
+          executed = true;
+          break;
+        case 'read page':
+          document.getElementById("narrate-page").click();
+          message = "Starting to read the page";
+          executed = true;
+          break;
+        case 'describe images':
+          document.getElementById("describe-images").click();
+          message = "Describing images on the page";
+          executed = true;
+          break;
+        case 'reset page':
+          document.getElementById("reset").click();
+          message = "Page reset to original state";
+          executed = true;
+          break;
+        case 'finger tracking':
+          document.getElementById("finger-tracking").click();
+          message = "Finger tracking activated";
+          executed = true;
+          break;
+        case 'stop finger tracking':
+          await fetch(`${BACKEND}/api/finger-tracker/stop`, { method: "POST" });
+          message = "Finger tracking stopped";
+          executed = true;
+          break;
+        case 'bigger text':
+          const currentSize = parseInt(document.getElementById('font-size-value').textContent);
+          const newSize = Math.min(currentSize + 2, 40);
+          document.getElementById('font-size-slider').value = newSize;
+          document.getElementById('font-size-slider').dispatchEvent(new Event('input'));
+          message = `Text size increased to ${newSize}px`;
+          executed = true;
+          break;
+        case 'smaller text':
+          const currentSize2 = parseInt(document.getElementById('font-size-value').textContent);
+          const newSize2 = Math.max(currentSize2 - 2, 10);
+          document.getElementById('font-size-slider').value = newSize2;
+          document.getElementById('font-size-slider').dispatchEvent(new Event('input'));
+          message = `Text size decreased to ${newSize2}px`;
+          executed = true;
+          break;
+        case 'help':
+          message = "You can say: inclusive mode, focus mode, task tunnel, read page, describe images, finger tracking, bigger text, smaller text, or any webpage command like 'click login' or 'search for shoes'";
+          executed = true;
+          break;
+      }
+
+      if (executed) {
+        // Show visual feedback
+        log(`✓ ${message}`);
+
+        // Speak confirmation if TTS is available
+        await respond(message);
+
+        // Add to conversation history
+        conversationHistory.push({ role: "user", text: cmd });
+        conversationHistory.push({ role: "assistant", text: message });
+        if (conversationHistory.length > 10) conversationHistory = conversationHistory.slice(-10);
+
+        return; // Don't send to GPT API
+      }
+    }
+  }
+  // ========== END EXTENSION FEATURE COMMANDS ==========
 
   // Try the built-in command handler first
   const res = await sendToActiveTab({ type: "CMD", cmd });
@@ -1101,6 +1220,14 @@ function handleVoiceMessage(msg) {
       }, 1500); // Auto-submit after 1.5 seconds of silence
     }
     if (msg.isFinal) {
+      // CRITICAL: Clear auto-submit timer to prevent duplicate submission!
+      if (voiceAutoSubmitTimer) {
+        console.log("[AccessFlow] Clearing auto-submit timer for isFinal");
+        clearTimeout(voiceAutoSubmitTimer);
+        voiceAutoSubmitTimer = null;
+      }
+      console.log("[AccessFlow] isFinal - submitting command:", msg.transcript);
+
       // Final verification before submitting
       if (lastSpokenText && isSpeaking) {
         // Only check echo if AI is CURRENTLY speaking

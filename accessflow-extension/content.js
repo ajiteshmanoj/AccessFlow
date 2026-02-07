@@ -929,6 +929,30 @@
       return { ok: true, message: `Clicked "${mClick[1]}".` };
     }
 
+    // "search for X", "find X", "look for X" - built-in search command
+    const mSearch = c.match(/^(?:search|find|look)\s+(?:for\s+)?(.+)$/);
+    if (mSearch) {
+      const searchQuery = mSearch[1].trim();
+
+      // Find search input using the same reliable logic as "type" command
+      const inputs = Array.from(document.querySelectorAll("input, textarea"));
+      const searchInput = inputs.find(i => {
+        const type = (i.type || "").toLowerCase();
+        const ph = (i.getAttribute("placeholder") || "").toLowerCase();
+        const name = (i.getAttribute("name") || "").toLowerCase();
+        // Prioritize search boxes
+        if (type === "search" || ph.includes("search") || name.includes("search") || name === "q") return true;
+        return false;
+      }) || inputs.find(i => {
+        const type = (i.type || "").toLowerCase();
+        return type === "text" || type === "" || i.tagName === "TEXTAREA";
+      });
+
+      if (!searchInput) return { ok: false, message: `No search box found on this page.` };
+      typeInto(searchInput, searchQuery);
+      return { ok: true, message: `Searching for "${searchQuery}".` };
+    }
+
     const mType = c.match(/^type\s+(.+)$/); // type <text> or type <field> <text>
     if (mType) {
       const fullText = cmd.trim().slice(4).trim(); // Everything after "type"
@@ -996,6 +1020,46 @@
     if (c === "go to bottom" || c === "scroll to bottom" || c === "bottom") {
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
       return { ok: true, message: "Scrolled to bottom." };
+    }
+
+    // Close ads, popups, modals
+    if (c === "close ad" || c === "close popup" || c === "dismiss ad" || c === "close modal" || c === "close this") {
+      // Find close buttons using common patterns
+      const closeButtons = Array.from(document.querySelectorAll([
+        // Common close button patterns
+        'button[aria-label*="close" i]',
+        'button[aria-label*="dismiss" i]',
+        'button[title*="close" i]',
+        'button[class*="close" i]',
+        'button[id*="close" i]',
+        'a[class*="close" i]',
+        'div[class*="close" i][role="button"]',
+        // X buttons
+        'button:has(svg[aria-label*="close" i])',
+        'button:has(span:is([class*="close" i], [class*="x" i]))',
+        // Common ad/modal close patterns
+        '[class*="modal"] button[class*="close" i]',
+        '[class*="popup"] button[class*="close" i]',
+        '[role="dialog"] button[aria-label*="close" i]',
+        // Text-based close buttons
+        'button:is(:has-text("✕"), :has-text("×"), :has-text("Close"), :has-text("Dismiss"))'
+      ].join(', ')));
+
+      // Filter for visible buttons only
+      const visibleCloseButtons = closeButtons.filter(btn => {
+        const rect = btn.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+
+      if (visibleCloseButtons.length === 0) {
+        return { ok: false, message: "No close button found. Try 'Focus Mode' to hide ads." };
+      }
+
+      // Click the first visible close button (usually the topmost popup)
+      const btn = visibleCloseButtons[0];
+      highlightElement(btn);
+      btn.click();
+      return { ok: true, message: "Closed ad/popup." };
     }
 
     // Navigation
@@ -1107,6 +1171,26 @@
 
   // Extract the most meaningful text from an element (avoids noisy innerText on product cards)
   function extractBestText(el) {
+    // For input elements, prioritize placeholder/name/aria-label (they often have no innerText)
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      const ariaLabel = (el.getAttribute("aria-label") || "").trim();
+      const placeholder = (el.getAttribute("placeholder") || "").trim();
+      const name = (el.getAttribute("name") || "").trim();
+      const type = (el.getAttribute("type") || "text").trim();
+      const value = (el.value || "").trim();
+
+      // Build descriptive text for input fields
+      const parts = [];
+      if (ariaLabel) parts.push(ariaLabel);
+      else if (placeholder) parts.push(placeholder);
+      else if (name) parts.push(name);
+      else if (type) parts.push(type + " input");
+
+      if (value && parts.length === 0) parts.push(value);
+
+      return parts.join(" ") || type + " field";
+    }
+
     // For links/buttons, prefer title attribute (e-commerce sites put clean product names here)
     if (el.tagName === "A" || el.tagName === "BUTTON") {
       const title = (el.getAttribute("title") || "").trim();
@@ -1168,6 +1252,22 @@
       else if (region === "other") score += 5;
       // nav/footer/header/sidebar get no bonus
 
+      // CRITICAL: Boost search inputs regardless of region!
+      if (el.tagName === "INPUT") {
+        const type = (el.getAttribute("type") || "").toLowerCase();
+        const placeholder = (el.getAttribute("placeholder") || "").toLowerCase();
+        const name = (el.getAttribute("name") || "").toLowerCase();
+        const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+
+        // Search box indicators - give HIGHEST priority
+        if (type === "search" ||
+            placeholder.includes("search") || placeholder.includes("find") || placeholder.includes("query") ||
+            name.includes("search") || name.includes("q") || name === "query" ||
+            ariaLabel.includes("search")) {
+          score += 100; // Search boxes get massive boost!
+        }
+      }
+
       // Finger proximity bonus: elements near finger cursor get +40 to +100
       const fingerPos = window.__fingerPosition;
       if (fingerPos && (Date.now() - fingerPos.timestamp) < 2000) {
@@ -1179,11 +1279,21 @@
         }
       }
 
+      // For input elements, include additional attributes to help identify search boxes
+      const inputAttrs = {};
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+        inputAttrs.placeholder = el.getAttribute("placeholder") || null;
+        inputAttrs.name = el.getAttribute("name") || null;
+        inputAttrs.ariaLabel = el.getAttribute("aria-label") || null;
+        inputAttrs.className = el.className || null;
+      }
+
       elements.push({
         index: idx,
         tag: el.tagName.toLowerCase(),
         text,
         type: el.getAttribute("type") || null,
+        ...inputAttrs,
         region,
         _score: score,
         _el: el
@@ -1226,8 +1336,13 @@
       highlightElement(el);
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       setTimeout(() => {
-        // Use multiple methods for better compatibility
-        el.click();
+        // Single click with pointer events for better compatibility
+        const pointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true });
+        const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
+        el.dispatchEvent(pointerDown);
+        el.dispatchEvent(pointerUp);
+
+        // Single click event (not el.click() to avoid duplicate)
         const clickEvent = new MouseEvent("click", {
           view: window,
           bubbles: true,
@@ -1235,11 +1350,6 @@
           composed: true
         });
         el.dispatchEvent(clickEvent);
-
-        const pointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true });
-        const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
-        el.dispatchEvent(pointerDown);
-        el.dispatchEvent(pointerUp);
       }, 400);
       return { ok: true, message: `Clicking "${entry.text.slice(0, 50)}".` };
     }
@@ -1255,10 +1365,29 @@
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.focus();
 
-      // Set value and trigger events
+      // Set value with React/Vue compatibility
+      // Method 1: Native setter (triggers React's internal tracking)
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, "value"
+      ).set;
+      if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(el, value || "");
+      }
+
+      // Method 2: Direct assignment (fallback)
       el.value = value || "";
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+
+      // Trigger all relevant events for framework compatibility
+      el.dispatchEvent(new Event("focus", { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+
+      // Re-focus for form validation
+      el.focus();
 
       // Auto-submit the search after typing
       setTimeout(() => {

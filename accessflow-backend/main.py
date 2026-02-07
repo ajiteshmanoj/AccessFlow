@@ -264,29 +264,89 @@ Rules:
 - Prefer partial matches over no match. E.g. "exercising in cold" should match "Is exercising in the cold good for you?"
 - If no element matches at all, set action to "none" and explain what went wrong
 
-COMMAND CLASSIFICATION (follow these EXACTLY):
+TEXT EXTRACTION RULES:
+When extracting text to type from search commands:
+1. Remove the command keyword ("search", "look for", "find") and preposition ("for")
+2. Keep EVERYTHING else exactly as the user said it
+3. Preserve the user's exact wording - don't paraphrase or summarize
+4. Include all modifiers, adjectives, and details
+
+Examples:
+- "search for red running shoes" → value: "red running shoes"
+- "search climate change" → value: "climate change"
+- "look for information about tesla" → value: "information about tesla"
+- "find nike air max 2024" → value: "nike air max 2024"
+- "search for \"best laptops\"" → value: "best laptops"
+
+CRITICAL: If you're unsure what to extract, include MORE rather than less.
+
+SEARCH INPUT FIELD SELECTION (for "type" actions):
+When the user says "search [for] X", you MUST find a search input field using this priority:
+1. ✓ HIGHEST PRIORITY: input[type="search"]
+2. ✓ HIGH PRIORITY: input with "search"/"query"/"find"/"q" in name attribute
+3. ✓ HIGH PRIORITY: input with "search"/"query"/"find" in placeholder text
+4. ✓ MEDIUM PRIORITY: input with "search" in aria-label or class
+5. ✓ MEDIUM PRIORITY: Text inputs in HEADER or NAV regions
+6. ✓ LOW PRIORITY: input[type="text"] with no specific indicators
+7. ✗ NEVER use: password, email, tel, date, number, hidden inputs
+
+CRITICAL: For "search" commands, prefer ANY input field over clicking a link.
+If multiple inputs exist, prefer the one in header/nav region.
+If NO input exists, set action to "none" - explain "No search box found on this page."
+
+Example element selection:
+Page has: [12] <input type="email" placeholder="Email"> in MAIN
+          [34] <a>images</a> in NAV
+          [45] <input type="text" placeholder="Search"> in HEADER
+          [78] <button>Search</button> in HEADER
+
+For "search for popmart" → target_index: 45 (the input in header)
+NEVER → target_index: 34 (clicking "images" link) ❌
+
+COMMAND CLASSIFICATION - REVISED:
 
 SEARCH COMMANDS (action: "type" into search input):
-- "search for X" → Find input element (search box, text input), TYPE X into it, never click
-- "search X" → TYPE into search box
-- "look for X" (when context indicates searching) → TYPE into search box
-- These commands ONLY type into input fields, NEVER click on links/buttons
-- If no search box exists, set action to "none"
+- "search [for] X" → SEARCH - ONLY type into input field, NEVER EVER click links/buttons
+- "find X" → SEARCH (unless "find where X is" → highlight)
+- "look for X" → SEARCH (always, no exceptions)
+- "look up X" → SEARCH
+
+CRITICAL RULE FOR SEARCH COMMANDS:
+If the command starts with "search", "find", "look for", or "look up":
+1. You MUST find an input field (search box, text input)
+2. You MUST use action: "type"
+3. You MUST NEVER use action: "click" - even if X matches a link
+4. If no search box exists, set action to "none" - DO NOT click as a fallback
+
+Example: "search for images" → Find search box, TYPE "images", NEVER click "images" link
 
 CLICK COMMANDS (action: "click" on links/buttons):
-- "click X" → Find link/button matching X, CLICK it, never type
-- "open X" → CLICK on link/button matching X
-- "press X" → CLICK on button matching X
-- "go to X" → CLICK on link matching X
-- Bare phrases like article titles/headlines → CLICK the matching link
-- These commands ONLY click clickable elements, NEVER type into inputs
+- "click [on] X" → CLICK
+- "open X" → CLICK
+- "go to X" → CLICK
+- "press X" → CLICK (for buttons)
+When navigation intent is clear → CLICK element, never type
+
+BARE PHRASES (no command keyword):
+Decision tree for phrases like "climate change":
+1. Does page have a search box?
+   - YES: Default to SEARCH (user can say "click X" if they want link)
+   - NO: Look for matching link → CLICK it
+2. If phrase EXACTLY matches a visible link/button AND user recently clicked links → CLICK
+3. If phrase is a generic topic/query (2+ words, no article words like "the") → SEARCH
+
+Examples:
+- "red shoes" + page has search box → SEARCH for "red shoes"
+- "red shoes" + no search box + link exists → CLICK the link
+- "climate change article" → CLICK (contains "article")
+- "best practices" → SEARCH (generic topic query)
 
 OTHER COMMANDS:
-- "highlight X" or "show me X" or "find X" or "where is X" → action: "highlight"
+- "highlight X" or "show me X" or "find where X is" → action: "highlight"
 - "type X into Y" or "enter X in Y" → action: "type" into specific field Y
 - "scroll down/up" → action: "scroll"
 
-CRITICAL: Never confuse search and click commands. "search for shoes" must TYPE, "click shoes" must CLICK.
+CRITICAL: When uncertain between search/click, default to SEARCH (safer, reversible). Never confuse search and click commands.
 
 Conversation context rules:
 - Use the conversation history to resolve references like "the first one", "that article", "no the other one", "do that again", "go back"
@@ -729,8 +789,8 @@ async def interpret_command(request: InterpretCommandRequest):
                 {"role": "system", "content": INTERPRET_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=200,
-            temperature=0.1
+            max_tokens=350,
+            temperature=0.25
         )
         response_text = response.choices[0].message.content.strip()
 

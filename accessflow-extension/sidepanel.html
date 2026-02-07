@@ -68,26 +68,34 @@
     <!-- Accessibility Tools -->
     <div class="section">
       <h3>🔧 Accessibility Tools</h3>
-      <div class="grid">
-        <button id="narrate-page">📖 Read Page</button>
-        <button id="describe-images">👁 Describe Images</button>
-        <button id="finger-tracking">👆 Finger Tracking</button>
-        <button id="tunnel">🧭 Task Tunnel</button>
-      </div>
 
-      <!-- Narration Panel (Hidden by default) -->
-      <div id="narration-panel" style="display:none; margin-top:12px;">
-        <div id="topic-chips" style="margin-bottom:8px;"></div>
-        <div id="narration-actions">
-          <button id="read-all" class="primary">📖 Read Everything</button>
-          <button id="narration-done" class="danger">✕ Done</button>
+      <!-- Read Page Section -->
+      <div class="tool-section">
+        <button id="narrate-page">📖 Read Page</button>
+        <!-- Narration Panel (Hidden by default) -->
+        <div id="narration-panel" style="display:none; margin-top:12px;">
+          <div id="topic-chips" style="margin-bottom:8px;"></div>
+          <div id="narration-actions">
+            <button id="read-all" class="primary">📖 Read Everything</button>
+            <button id="narration-done" class="danger">✕ Done</button>
+          </div>
         </div>
       </div>
 
-      <!-- Image Description Controls (Hidden by default) -->
-      <div id="image-description-controls" style="display:none; margin-top:12px;">
-        <button id="next-image" class="primary">⏭ Next Image</button>
-        <button id="stop-image-description" class="danger">🛑 Stop</button>
+      <!-- Describe Images Section -->
+      <div class="tool-section" style="margin-top:8px;">
+        <button id="describe-images">👁 Describe Images</button>
+        <!-- Image Description Controls (Hidden by default) -->
+        <div id="image-description-controls" style="display:none; margin-top:12px;">
+          <button id="next-image" class="primary">⏭ Next Image</button>
+          <button id="stop-image-description" class="danger">🛑 Stop</button>
+        </div>
+      </div>
+
+      <!-- Other Tools -->
+      <div class="grid" style="margin-top:8px;">
+        <button id="finger-tracking">👆 Finger Tracking</button>
+        <button id="tunnel">🧭 Task Tunnel</button>
       </div>
     </div>
 

@@ -619,6 +619,14 @@ input:focus-visible {
   box-shadow: var(--shadow-sm);
 }
 
+.tool-section {
+  width: 100%;
+}
+
+.tool-section > button {
+  width: 100%;
+}
+
 .section h3 {
   margin: 0 0 12px 0;
   font-size: 14px;

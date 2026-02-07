@@ -80,6 +80,107 @@ async function sendToActiveTab(payload) {
   return res;
 }
 
+// ========== USER PROFILE PERSISTENCE ==========
+const PROFILE_DEFAULTS = {
+  inclusiveMode: false,
+  focusMode: false,
+  simplifyPage: false,
+  autoListen: false,
+  autoReadPage: false
+};
+
+async function loadProfile() {
+  try {
+    const result = await chrome.storage.local.get("userProfile");
+    return { ...PROFILE_DEFAULTS, ...(result.userProfile || {}) };
+  } catch (_) {
+    return { ...PROFILE_DEFAULTS };
+  }
+}
+
+async function saveProfile(updates) {
+  const current = await loadProfile();
+  const updated = { ...current, ...updates };
+  await chrome.storage.local.set({ userProfile: updated });
+  updateProfileUI(updated);
+}
+
+async function applyProfile(profile) {
+  // Auto-apply saved modes by clicking their buttons (with delay for content script)
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  if (profile.inclusiveMode) {
+    document.getElementById("inclusive").click();
+  }
+  if (profile.focusMode) {
+    document.getElementById("focus").click();
+  }
+  if (profile.simplifyPage) {
+    document.getElementById("simplify").click();
+  }
+  if (profile.autoListen) {
+    await startListening();
+  }
+  if (profile.autoReadPage) {
+    document.getElementById("narrate-page").click();
+  }
+}
+
+function updateProfileUI(profile) {
+  if (!profile) return;
+
+  // Sync checkboxes
+  const autoListenEl = document.getElementById("pref-auto-listen");
+  const autoReadEl = document.getElementById("pref-auto-read");
+  if (autoListenEl) autoListenEl.checked = profile.autoListen;
+  if (autoReadEl) autoReadEl.checked = profile.autoReadPage;
+
+  // Update status pill
+  const statusEl = document.getElementById("profile-status");
+  const hasSavedPrefs = profile.inclusiveMode || profile.focusMode ||
+    profile.simplifyPage || profile.autoListen || profile.autoReadPage;
+
+  if (statusEl) {
+    if (hasSavedPrefs) {
+      statusEl.textContent = "Preferences saved";
+      statusEl.classList.add("saved");
+    } else {
+      statusEl.textContent = "No preferences saved";
+      statusEl.classList.remove("saved");
+    }
+  }
+
+  // Update active modes indicator
+  const modesEl = document.getElementById("profile-active-modes");
+  if (modesEl) {
+    modesEl.innerHTML = "";
+    const modes = [
+      { key: "inclusiveMode", label: "Inclusive Mode will auto-apply" },
+      { key: "focusMode", label: "Focus Mode will auto-apply" },
+      { key: "simplifyPage", label: "Simplify Page will auto-apply" }
+    ];
+    for (const mode of modes) {
+      if (profile[mode.key]) {
+        const div = document.createElement("div");
+        div.className = "mode-indicator";
+        div.textContent = mode.label;
+        modesEl.appendChild(div);
+      }
+    }
+  }
+}
+
+async function clearProfile() {
+  await chrome.storage.local.remove("userProfile");
+  updateProfileUI(PROFILE_DEFAULTS);
+  // Reset page
+  await sendToActiveTab({ type: "RESET" });
+  isSimplifyActive = false;
+  document.getElementById("simplify").classList.remove("active");
+  log("All preferences cleared.");
+}
+// ========== END USER PROFILE PERSISTENCE ==========
+
 document.getElementById("inclusive").onclick = async () => {
   if (isInclusiveModeActive) {
     // Toggle OFF
@@ -97,6 +198,7 @@ document.getElementById("inclusive").onclick = async () => {
   document.getElementById("inclusive-controls").style.display = "block";
   isInclusiveModeActive = true;
   log(res?.message || "Inclusive Mode applied.");
+  saveProfile({ inclusiveMode: true, focusMode: false });
 };
 
 document.getElementById("focus").onclick = async () => {
@@ -116,6 +218,7 @@ document.getElementById("focus").onclick = async () => {
   document.getElementById("focus-controls").style.display = "block";
   isFocusModeActive = true;
   log(res?.message || "Focus Mode applied.");
+  saveProfile({ focusMode: true, inclusiveMode: false });
 };
 
 document.getElementById("tunnel").onclick = async () => {
@@ -155,6 +258,8 @@ document.getElementById("reset").onclick = async () => {
   document.getElementById("focus-controls").style.display = "none";
 
   log(res?.message || "Reset.");
+  // Clear mode preferences but preserve autoListen and autoReadPage
+  saveProfile({ inclusiveMode: false, focusMode: false, simplifyPage: false });
 };
 
 document.getElementById("reset-defaults").onclick = async () => {
@@ -203,6 +308,7 @@ document.getElementById("simplify").onclick = async () => {
     document.getElementById("simplify").classList.remove("active");
     isSimplifyActive = false;
     log("Simplification removed.");
+    saveProfile({ simplifyPage: false });
     return;
   }
 
@@ -238,6 +344,7 @@ document.getElementById("simplify").onclick = async () => {
       document.getElementById("simplify").classList.add("active");
       isSimplifyActive = true;
       log("Page simplified: " + data.summary);
+      saveProfile({ simplifyPage: true });
 
       // Log individual changes
       if (data.changes_description && data.changes_description.length > 0) {
@@ -1257,6 +1364,35 @@ document.querySelectorAll('.intensity-btn').forEach(btn => {
   };
 });
 // ========== END FOCUS MODE SETTINGS ==========
+
+// ========== PROFILE STARTUP & HANDLERS ==========
+// Checkbox handlers
+document.getElementById("pref-auto-listen").addEventListener("change", (e) => {
+  saveProfile({ autoListen: e.target.checked });
+});
+
+document.getElementById("pref-auto-read").addEventListener("change", (e) => {
+  saveProfile({ autoReadPage: e.target.checked });
+});
+
+// Clear profile button
+document.getElementById("clear-profile").onclick = () => {
+  clearProfile();
+};
+
+// Startup: load and apply saved profile
+(async () => {
+  const profile = await loadProfile();
+  updateProfileUI(profile);
+
+  const hasModes = profile.inclusiveMode || profile.focusMode ||
+    profile.simplifyPage || profile.autoListen || profile.autoReadPage;
+  if (hasModes) {
+    log("Restoring your saved preferences...");
+    await applyProfile(profile);
+  }
+})();
+// ========== END PROFILE STARTUP & HANDLERS ==========
 
 // Initial hint
 log("Tip: Press Ctrl+Shift+V anytime to toggle voice input, or click the mic button.");

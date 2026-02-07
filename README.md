@@ -28,35 +28,91 @@ INTUITION/
 
 ## Quick Start
 
-### Backend Setup
+### Prerequisites
+- Python 3.8 or higher
+- Google Chrome browser
+- Git (optional, for cloning)
 
+### Step 1: Get the Code
+```bash
+git clone https://github.com/ajiteshmanoj/AccessFlow.git
+cd AccessFlow
+```
+
+Or download and extract the ZIP file.
+
+### Step 2: Install Backend Dependencies
 ```bash
 cd accessflow-backend
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Activate virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Create .env file from example
+# On Windows: copy .env.example .env
+# On macOS/Linux: cp .env.example .env
 
-# Run the server
-uvicorn main:app --reload
+# Edit .env and add your OPENAI_API_KEY
+# Example: OPENAI_API_KEY=sk-proj-...
+```
+
+### Step 3: Start the Backend
+```bash
+# Go back to the main AccessFlow directory
+cd ..
+
+# Start the backend (auto-detects your OS)
+python start-accessflow.py
+```
+
+You should see: `✅ AccessFlow backend started!`
+
+**Alternative startup options:**
+
+Platform-specific scripts:
+- macOS/Linux: `./start-accessflow.sh`
+- Windows: `start-accessflow.bat`
+
+Or run manually:
+```bash
+cd accessflow-backend
+python main.py
 ```
 
 The API will be available at `http://localhost:8000`
 
-### Extension Setup
+**To stop the backends:**
+```bash
+python stop-accessflow.py
+```
 
-1. Open Chrome and navigate to `chrome://extensions`
-2. Enable "Developer mode" (toggle in top right)
-3. Click "Load unpacked"
-4. Select the `accessflow-extension` folder
-5. The AccessFlow icon will appear in your toolbar
+### Step 4: Load Chrome Extension
+
+1. Open Google Chrome and navigate to `chrome://extensions`
+2. Enable **Developer mode** (toggle in top-right corner)
+3. Click **Load unpacked**
+4. Navigate to and select the `accessflow-extension` folder
+5. The AccessFlow icon will appear in your Chrome toolbar
+
+### Step 5: Start Using AccessFlow!
+
+1. Click the AccessFlow icon to open the side panel
+2. Try these features:
+   - **Voice commands**: Click the microphone button or press `Ctrl+Shift+V` (Windows) / `Cmd+Shift+V` (Mac)
+   - **Type**: Say "type toilet paper" to search
+   - **Click**: Say "click search button"
+   - **Navigate**: Say "scroll down", "go back"
+   - **Narrate**: Say "narrate page" to hear page content
+   - **Finger tracking**: Click "Start Finger Tracker" for gesture control
 
 ## Features
 
@@ -79,6 +135,40 @@ The API will be available at `http://localhost:8000`
 - `GET /` - Health check
 - `GET /health` - Server status
 - `POST /api/chat` - Process user message with page context
+
+## Troubleshooting
+
+### Windows: Port Already in Use
+
+If you get "port already in use" errors on Windows:
+
+```batch
+# Use the enhanced stop script that kills ports
+stop-accessflow.bat
+
+# Or manually free ports
+netstat -ano | findstr :8000
+netstat -ano | findstr :9000
+taskkill /F /PID <PID_NUMBER>
+```
+
+### Windows: Finger Tracker Not Starting
+
+The finger tracker will open in a **new console window** on Windows. If it doesn't appear:
+
+1. Check Windows Defender/Antivirus isn't blocking it
+2. Make sure your webcam isn't in use by another app
+3. Try running manually to see errors:
+   ```batch
+   cd accessflow-backend
+   python finger_tracker.py
+   ```
+
+### All Platforms: Extension Not Loading
+
+1. Go to `chrome://extensions`
+2. Click **Reload** (circular arrow) on AccessFlow
+3. Check browser console (F12) for errors
 
 ## License
 

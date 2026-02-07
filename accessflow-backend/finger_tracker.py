@@ -39,12 +39,12 @@ MODEL_URL  = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/ha
 connected_clients = set()
 
 # ── Thresholds ───────────────────────────────────────────────────────
-PINCH_ON_THRESHOLD   = 0.05   # distance to START a pinch (actual contact, below natural rest ~0.08)
-PINCH_OFF_THRESHOLD  = 0.10   # distance to END a pinch (natural rest ~0.09 crosses this)
+PINCH_ON_THRESHOLD   = 0.04   # distance to START a pinch (must TOUCH to trigger)
+PINCH_OFF_THRESHOLD  = 0.07   # distance to END a pinch (closer gap for tighter control)
 SCROLL_SENSITIVITY   = 0.012  # min vertical delta per frame to trigger scroll
-DOUBLE_PINCH_WINDOW  = 1.0    # seconds — max gap between two pinches for double-pinch
-TAP_MAX_DURATION     = 0.5    # seconds — max pinch duration to count as a "tap"
-HOLD_THRESHOLD       = 0.6    # seconds — pinch held still = highlight
+DOUBLE_PINCH_WINDOW  = 1.2    # seconds — max gap between two pinches for double-pinch (more forgiving)
+TAP_MAX_DURATION     = 0.8    # seconds — max pinch duration to count as a "tap" (VERY forgiving)
+HOLD_THRESHOLD       = 1.0    # seconds — pinch held still = highlight (longer hold = less accidental)
 HOLD_MOVE_TOLERANCE  = 0.035  # normalized — max drift to still count as "still"
 
 # ── Shared result from async callback ────────────────────────────────
@@ -226,24 +226,17 @@ def process_gestures(hand_landmarks, now):
         drift = math.sqrt((x - pinch_start_pos[0])**2 +
                           (y - pinch_start_pos[1])**2)
 
-        # Count as a "tap" if it was short — be generous with drift
+        # Count as a "tap" if it was short — quick pinch = click!
         was_tap = elapsed < TAP_MAX_DURATION
-        print(f"  [tap?] elapsed={elapsed:.3f}s drift={drift:.3f} → {'TAP' if was_tap else 'HOLD'}")
+        print(f"  ✅ PINCH RELEASED! elapsed={elapsed:.3f}s → {'CLICK!' if was_tap else 'HOLD (no click)'}")
 
         if was_tap:
-            gap = now - last_pinch_up
-            last_pinch_up = now
-            print(f"  [double?] gap={gap:.3f}s → {'CLICK!' if gap < DOUBLE_PINCH_WINDOW else 'waiting for 2nd tap'}")
-            if gap < DOUBLE_PINCH_WINDOW:
-                # Double pinch → click!
-                last_pinch_up = 0
-                return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                        "gesture": "click"}
-            else:
-                return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                        "gesture": "pinch_release"}
+            # Single quick pinch → click!
+            print(f"  🖱️  SENDING CLICK COMMAND!")
+            return {"detected": True, "mode": "cursor", "x": x, "y": y,
+                    "gesture": "click"}
         else:
-            last_pinch_up = 0
+            # Long pinch → just release (no action)
             return {"detected": True, "mode": "cursor", "x": x, "y": y,
                     "gesture": "pinch_release"}
 

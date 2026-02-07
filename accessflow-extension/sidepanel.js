@@ -606,7 +606,14 @@ document.getElementById("describe-images").onclick = async () => {
     ).join("\n");
 
     log(allText);
-    speak(allText);
+
+    // Show stop button during image description
+    showNarrationControls(true);
+
+    await speak(allText);
+
+    // Hide controls after speaking completes
+    showNarrationControls(false);
   } catch (e) {
     log("Error calling describe-images API: " + e.message);
   }
@@ -720,6 +727,7 @@ const micBtn = document.getElementById("mic");
 let isListening = false;
 let voicePort = null;
 let voicePortId = 0; // monotonic ID to guard against stale disconnect events
+let voiceAutoSubmitTimer = null; // Timer for auto-submitting after user stops speaking
 
 function stopListening() {
   if (isListening) playStopTone();
@@ -728,6 +736,13 @@ function stopListening() {
   if (voicePort) {
     try { voicePort.disconnect(); } catch (_) {}
     voicePort = null;
+  }
+  // Clear status and timer
+  const statusEl = document.getElementById("voice-status");
+  if (statusEl) statusEl.textContent = "";
+  if (voiceAutoSubmitTimer) {
+    clearTimeout(voiceAutoSubmitTimer);
+    voiceAutoSubmitTimer = null;
   }
 }
 
@@ -755,35 +770,63 @@ function handleVoiceMessage(msg) {
   if (msg.type === "VOICE_RESULT") {
     const transcript = msg.transcript.trim();
 
-    // SOPHISTICATED ECHO CANCELLATION while allowing interrupts
+    // AGGRESSIVE ECHO CANCELLATION while allowing interrupts
     if (isSpeaking && lastSpokenText) {
       const echoScore = calculateEchoScore(transcript, lastSpokenText);
 
-      // If >40% of words match what we're saying, it's likely echo
-      if (echoScore > 0.4) {
+      // If >25% of words match what we're saying, it's likely echo (more aggressive)
+      if (echoScore > 0.25) {
         // This is echo - ignore it completely
         return;
       }
 
-      // If <40% match, it's likely a user interrupt
-      if (transcript.length > 3 && echoScore < 0.4) {
+      // If <25% match, it's likely a user interrupt
+      if (transcript.length > 3 && echoScore < 0.25) {
         stopSpeaking();
         log("(interrupted)");
       }
     }
 
     document.getElementById("cmd").value = msg.transcript;
+
+    // Clear any existing auto-submit timer
+    if (voiceAutoSubmitTimer) {
+      clearTimeout(voiceAutoSubmitTimer);
+      voiceAutoSubmitTimer = null;
+    }
+
+    // If user has said something substantial, set timer to auto-submit after 1.5 seconds of silence
+    if (!msg.isFinal && transcript.length > 5) {
+      // Show status that we're waiting
+      const statusEl = document.getElementById("voice-status");
+      if (statusEl) statusEl.textContent = "🎤 Listening... (pause to submit)";
+
+      voiceAutoSubmitTimer = setTimeout(() => {
+        const currentText = document.getElementById("cmd").value.trim();
+        if (currentText.length > 5 && isListening) {
+          if (statusEl) statusEl.textContent = "✅ Sending...";
+          log("(auto-submitting after pause)");
+          voiceInitiated = true;
+          document.getElementById("send").click();
+          setTimeout(() => { if (statusEl) statusEl.textContent = ""; }, 1000);
+        }
+      }, 1500); // Auto-submit after 1.5 seconds of silence
+    }
     if (msg.isFinal) {
       // Final verification before submitting
-      if (lastSpokenText) {
+      if (lastSpokenText && isSpeaking) {
+        // Only check echo if AI is CURRENTLY speaking
         const echoScore = calculateEchoScore(transcript, lastSpokenText);
 
-        // If it still looks like echo, don't submit
-        if (echoScore > 0.5) {
+        // If it still looks like echo, don't submit (more aggressive threshold)
+        if (echoScore > 0.3) {
           document.getElementById("cmd").value = "";
           return;
         }
       }
+
+      // Clear lastSpokenText after 4 seconds to avoid blocking future commands
+      setTimeout(() => { lastSpokenText = null; }, 4000);
 
       // Don't stop listening — continuous mode keeps the mic open.
       // Just submit the command; after respond() finishes it will
@@ -864,6 +907,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "FINGER_TRACKER_ERROR") {
     log("Finger tracking error: " + msg.error);
   }
+  if (msg.type === "FINGER_TRACKER_RETRY") {
+    log(`Retrying connection... (attempt ${msg.attempt}/${msg.maxAttempts})`);
+  }
 });
 
 // --- end Voice Input ---
@@ -900,10 +946,10 @@ document.getElementById("finger-tracking").onclick = async () => {
       if (startData.status === "started" || startData.status === "already_running") {
         log("Finger tracker started! Point your finger at the camera.");
 
-        // Wait a moment for WebSocket server to initialize
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for WebSocket server to initialize (with auto-retry fallback)
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // Connect WebSocket from background.js
+        // Connect WebSocket from background.js (will auto-retry if needed)
         chrome.runtime.sendMessage({ type: "START_FINGER_TRACKING" });
         isFingerTrackingActive = true;
       } else {

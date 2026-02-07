@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
+import sys
 import json
 import subprocess
 import signal
@@ -55,15 +56,37 @@ def start_finger_tracker():
         return {"status": "already_running", "message": "Finger tracker is already running"}
 
     try:
+        # Get absolute path to finger_tracker.py
+        script_dir = os.path.dirname(os.path.abspath(__file__)) or os.getcwd()
+        tracker_script = os.path.join(script_dir, "finger_tracker.py")
+
+        if not os.path.exists(tracker_script):
+            return {"status": "error", "message": f"finger_tracker.py not found at {tracker_script}"}
+
         # Start finger_tracker.py as subprocess
-        finger_tracker_process = subprocess.Popen(
-            ["python3", "finger_tracker.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=os.path.dirname(__file__)
-        )
+        # On Windows, use CREATE_NEW_CONSOLE to show the camera window
+        import platform
+        if platform.system() == "Windows":
+            # Windows: Create new console window so camera preview is visible
+            finger_tracker_process = subprocess.Popen(
+                [sys.executable, tracker_script],
+                cwd=script_dir,
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+        else:
+            # Unix: Standard subprocess
+            finger_tracker_process = subprocess.Popen(
+                [sys.executable, tracker_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=script_dir
+            )
+
         return {"status": "started", "message": "Finger tracker started", "pid": finger_tracker_process.pid}
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error starting finger tracker: {error_detail}")
         return {"status": "error", "message": str(e)}
 
 def stop_finger_tracker():
@@ -237,14 +260,33 @@ Return ONLY a valid JSON object with this structure:
 Rules:
 - Elements are grouped by page region and pre-sorted by relevance. Element indices may be non-sequential (they are stable DOM IDs).
 - For article/headline/product/content requests, PREFER elements in MAIN CONTENT or ARTICLE regions
-- If the user says something that sounds like an article title, headline, or link text, they want to CLICK it
-- If the user says "click X" or "press X" or "open X" or "go to X", find the best matching element and click it
-- If the user says "highlight X" or "show me X" or "find X" or "where is X", find the element and highlight it
-- If the user says "type X into Y" or "enter X in Y", type X into input Y
-- If the user says "scroll down/up" or navigation commands, use scroll
 - Match elements by fuzzy text similarity — the user won't say exact text
-- If no element matches at all, set action to "none" and explain what went wrong
 - Prefer partial matches over no match. E.g. "exercising in cold" should match "Is exercising in the cold good for you?"
+- If no element matches at all, set action to "none" and explain what went wrong
+
+COMMAND CLASSIFICATION (follow these EXACTLY):
+
+SEARCH COMMANDS (action: "type" into search input):
+- "search for X" → Find input element (search box, text input), TYPE X into it, never click
+- "search X" → TYPE into search box
+- "look for X" (when context indicates searching) → TYPE into search box
+- These commands ONLY type into input fields, NEVER click on links/buttons
+- If no search box exists, set action to "none"
+
+CLICK COMMANDS (action: "click" on links/buttons):
+- "click X" → Find link/button matching X, CLICK it, never type
+- "open X" → CLICK on link/button matching X
+- "press X" → CLICK on button matching X
+- "go to X" → CLICK on link matching X
+- Bare phrases like article titles/headlines → CLICK the matching link
+- These commands ONLY click clickable elements, NEVER type into inputs
+
+OTHER COMMANDS:
+- "highlight X" or "show me X" or "find X" or "where is X" → action: "highlight"
+- "type X into Y" or "enter X in Y" → action: "type" into specific field Y
+- "scroll down/up" → action: "scroll"
+
+CRITICAL: Never confuse search and click commands. "search for shoes" must TYPE, "click shoes" must CLICK.
 
 Conversation context rules:
 - Use the conversation history to resolve references like "the first one", "that article", "no the other one", "do that again", "go back"
@@ -255,7 +297,7 @@ Suggestion rules — always include a short, helpful follow-up suggestion:
 - After clicking a link/article: "Say 'read page' to hear it aloud, or 'go back' to return"
 - After scrolling: "Keep scrolling, or say an article title to open it"
 - After highlighting an element: "Say 'click' to activate it, or keep browsing"
-- After typing into a field: "Say 'click' on a submit button, or keep typing"
+- After searching (typing into search box): "Results are loading, or say 'scroll down' to browse"
 - If no action was taken: "Try saying an article title, or say 'help' for options"
 """
 

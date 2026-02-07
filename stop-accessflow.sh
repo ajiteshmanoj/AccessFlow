@@ -18,7 +18,7 @@ if [ -f /tmp/accessflow-main.pid ]; then
 fi
 
 # Clean up any orphaned finger tracker processes
-pkill -f "python3 finger_tracker.py"
+pkill -f "python finger_tracker.py"
 
 echo ""
 echo "✅ All AccessFlow backends stopped"

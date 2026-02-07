@@ -499,6 +499,73 @@ input:focus-visible {
   box-shadow: var(--shadow-lg);
 }
 
+/* ========== Suggestion Banner ========== */
+#suggestions-banner {
+  background: linear-gradient(135deg, #fffbeb, #fef3c7);
+  border: 1px solid #fcd34d;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  animation: fadeIn 0.3s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.suggest-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: #92400e;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #f59e0b;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.suggest-chip:hover {
+  background: #fde68a;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+
+.suggest-dismiss {
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 4px !important;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.suggest-dismiss:hover {
+  opacity: 1;
+  background: none !important;
+  transform: none;
+}
+
 /* ========== Focus Mode Controls ========== */
 #focus-controls {
   background: var(--soft);

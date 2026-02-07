@@ -1492,6 +1492,51 @@ document.querySelectorAll('.intensity-btn').forEach(btn => {
 });
 // ========== END FOCUS MODE SETTINGS ==========
 
+// ========== AUTO-SUGGEST MODE ON PAGE LOAD ==========
+async function analyzeAndSuggest() {
+  try {
+    // Skip if user already has modes active from profile
+    const profile = await loadProfile();
+    if (profile.inclusiveMode || profile.focusMode || profile.simplifyPage) return;
+
+    const res = await sendToActiveTab({ type: "ANALYZE_PAGE" });
+    if (!res?.ok || !res.suggestions || res.suggestions.length === 0) return;
+
+    const banner = document.getElementById("suggestions-banner");
+    if (!banner) return;
+
+    // Build banner content
+    let html = '<div class="suggest-header">Suggested for this page</div>';
+    html += '<div class="suggest-chips">';
+    for (const s of res.suggestions) {
+      html += `<button class="suggest-chip" data-btn="${s.buttonId}" title="${s.reason}">${s.mode}</button>`;
+    }
+    html += '</div>';
+    html += '<button class="suggest-dismiss">Dismiss</button>';
+
+    banner.innerHTML = html;
+    banner.style.display = "block";
+
+    // Chip click handlers
+    banner.querySelectorAll(".suggest-chip").forEach(chip => {
+      chip.onclick = () => {
+        const btnId = chip.dataset.btn;
+        const target = document.getElementById(btnId);
+        if (target) target.click();
+        banner.style.display = "none";
+      };
+    });
+
+    // Dismiss handler
+    banner.querySelector(".suggest-dismiss").onclick = () => {
+      banner.style.display = "none";
+    };
+  } catch (_) {
+    // Silent fail — suggestion is non-critical
+  }
+}
+// ========== END AUTO-SUGGEST ==========
+
 // ========== PROFILE STARTUP & HANDLERS ==========
 // Checkbox handlers
 document.getElementById("pref-auto-listen").addEventListener("change", (e) => {
@@ -1518,6 +1563,9 @@ document.getElementById("clear-profile").onclick = () => {
     log("Restoring your saved preferences...");
     await applyProfile(profile);
   }
+
+  // Auto-suggest relevant modes after profile loads
+  setTimeout(analyzeAndSuggest, 1000);
 })();
 // ========== END PROFILE STARTUP & HANDLERS ==========
 

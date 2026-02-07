@@ -1928,6 +1928,92 @@
         sendResponse({ ok: true, sections, page_title: document.title, page_url: window.location.href });
         return true;
       }
+      if (msg?.type === "ANALYZE_PAGE") {
+        try {
+          // 1. Sample font sizes from visible text elements
+          const textEls = document.querySelectorAll("p, span, li, td, div, a, label");
+          const fontSizes = [];
+          let sampled = 0;
+          for (const el of textEls) {
+            if (sampled >= 80) break;
+            if (el.offsetWidth === 0 && el.offsetHeight === 0) continue;
+            const size = parseFloat(getComputedStyle(el).fontSize);
+            if (size > 0) { fontSizes.push(size); sampled++; }
+          }
+          fontSizes.sort((a, b) => a - b);
+          const medianFontSize = fontSizes.length > 0
+            ? fontSizes[Math.floor(fontSizes.length / 2)]
+            : 16;
+
+          // 2. Count nav links
+          const navContainers = document.querySelectorAll(
+            "nav, header, [role='navigation'], .navbar, .nav, #nav"
+          );
+          let navLinkCount = 0;
+          navContainers.forEach(container => {
+            navLinkCount += container.querySelectorAll("a").length;
+          });
+
+          // 3. Count words and headings
+          const bodyText = document.body.innerText || "";
+          const wordCount = bodyText.split(/\s+/).filter(w => w.length > 0).length;
+          const headingCount = document.querySelectorAll("h1, h2, h3, h4, h5, h6").length;
+
+          // 4. Count images missing alt with visible size > 50x50
+          const allImages = document.querySelectorAll("img");
+          let missingAltCount = 0;
+          allImages.forEach(img => {
+            const hasAlt = img.hasAttribute("alt") && img.alt.trim().length > 0;
+            if (!hasAlt && img.naturalWidth > 50 && img.naturalHeight > 50) {
+              missingAltCount++;
+            }
+          });
+
+          // Build suggestions
+          const suggestions = [];
+
+          if (medianFontSize < 14) {
+            suggestions.push({
+              mode: "Inclusive Mode",
+              reason: `Median font size is only ${Math.round(medianFontSize)}px — may be hard to read`,
+              buttonId: "inclusive"
+            });
+          }
+
+          if (navLinkCount > 40) {
+            suggestions.push({
+              mode: "Focus Mode",
+              reason: `${navLinkCount} navigation links detected — page may feel cluttered`,
+              buttonId: "focus"
+            });
+          }
+
+          if (wordCount > 3000 && headingCount < wordCount / 500) {
+            suggestions.push({
+              mode: "Simplify Page",
+              reason: `${wordCount.toLocaleString()} words with few headings — dense content`,
+              buttonId: "simplify"
+            });
+          }
+
+          if (missingAltCount > 5) {
+            suggestions.push({
+              mode: "Describe Images",
+              reason: `${missingAltCount} images lack alt text`,
+              buttonId: "describe-images"
+            });
+          }
+
+          sendResponse({
+            ok: true,
+            suggestions,
+            stats: { medianFontSize, navLinkCount, wordCount, headingCount, missingAltCount }
+          });
+        } catch (e) {
+          sendResponse({ ok: false, suggestions: [], stats: {}, message: e.message });
+        }
+        return true;
+      }
       sendResponse({ ok: false, message: "Unknown message." });
     } catch (e) {
       sendResponse({ ok: false, message: "Error: " + (e?.message || String(e)) });

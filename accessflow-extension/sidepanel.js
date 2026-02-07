@@ -6,6 +6,9 @@ let isInclusiveModeActive = false;
 let isFocusModeActive = false;
 let isTunnelModeActive = false;
 let focusIntensity = "medium"; // Default: medium intensity
+let isColorBlindActive = false;
+let colorBlindFilter = "deuteranopia";
+let colorBlindMode = "correct";
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -238,6 +241,25 @@ document.getElementById("tunnel").onclick = async () => {
   log(res?.message || "Task Tunnel started.");
 };
 
+document.getElementById("colorblind").onclick = async () => {
+  if (isColorBlindActive) {
+    // Toggle OFF
+    await sendToActiveTab({ type: "COLORBLIND_OFF" });
+    document.getElementById("colorblind").classList.remove("active");
+    document.getElementById("colorblind-controls").style.display = "none";
+    isColorBlindActive = false;
+    log("Color blind filter removed.");
+    return;
+  }
+
+  // Toggle ON
+  const res = await sendToActiveTab({ type: "COLORBLIND_ON", filter: colorBlindFilter, mode: colorBlindMode });
+  document.getElementById("colorblind").classList.add("active");
+  document.getElementById("colorblind-controls").style.display = "block";
+  isColorBlindActive = true;
+  log(res?.message || "Color blind filter applied.");
+};
+
 document.getElementById("reset").onclick = async () => {
   const res = await sendToActiveTab({ type: "RESET" });
 
@@ -246,16 +268,19 @@ document.getElementById("reset").onclick = async () => {
   isInclusiveModeActive = false;
   isFocusModeActive = false;
   isTunnelModeActive = false;
+  isColorBlindActive = false;
 
   // Remove active classes from all buttons
   document.getElementById("simplify").classList.remove("active");
   document.getElementById("inclusive").classList.remove("active");
   document.getElementById("focus").classList.remove("active");
   document.getElementById("tunnel").classList.remove("active");
+  document.getElementById("colorblind").classList.remove("active");
 
   // Hide controls
   document.getElementById("inclusive-controls").style.display = "none";
   document.getElementById("focus-controls").style.display = "none";
+  document.getElementById("colorblind-controls").style.display = "none";
 
   log(res?.message || "Reset.");
   // Clear mode preferences but preserve autoListen and autoReadPage
@@ -284,8 +309,23 @@ document.getElementById("reset-defaults").onclick = async () => {
     }
   });
 
+  // Reset color blind to defaults
+  colorBlindFilter = "deuteranopia";
+  colorBlindMode = "correct";
+  document.querySelectorAll('.cb-filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.filter === "deuteranopia");
+  });
+  document.querySelectorAll('.cb-mode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === "correct");
+  });
+
   // Save to Chrome storage
-  chrome.storage.sync.set({ inclusiveFontSize: defaultFontSize, focusIntensity: defaultIntensity });
+  chrome.storage.sync.set({
+    inclusiveFontSize: defaultFontSize,
+    focusIntensity: defaultIntensity,
+    colorBlindFilter: "deuteranopia",
+    colorBlindMode: "correct"
+  });
 
   // Re-apply modes if they're active
   if (isInclusiveModeActive) {
@@ -294,8 +334,11 @@ document.getElementById("reset-defaults").onclick = async () => {
   if (isFocusModeActive) {
     await sendToActiveTab({ type: "FOCUS_ON", intensity: defaultIntensity });
   }
+  if (isColorBlindActive) {
+    await sendToActiveTab({ type: "COLORBLIND_ON", filter: colorBlindFilter, mode: colorBlindMode });
+  }
 
-  log("Settings reset to defaults (18px font, Medium intensity).");
+  log("Settings reset to defaults (18px font, Medium intensity, Deuteranopia Correct).");
 };
 
 // ========== INTELLIGENT PAGE SIMPLIFICATION ==========
@@ -373,6 +416,9 @@ const PANEL_COMMANDS = {
   "simplify":        "simplify",
   "reset page":      "reset",
   "reset":           "reset",
+  "color blind":     "colorblind",
+  "color filter":    "colorblind",
+  "colorblind":      "colorblind",
   "describe images": "describe-images",
   "describe":        "describe-images",
   "read page":       "narrate-page",
@@ -461,6 +507,7 @@ document.getElementById("send").onclick = async () => {
     'simplify page': ['simplify', 'simplify page', 'make simpler', 'simplify this page'],
     'read page': ['read page', 'read this page', 'read aloud', 'start reading', 'narrate page'],
     'describe images': ['describe images', 'describe pictures', 'explain images', 'what are the images'],
+    'color blind': ['color blind', 'colorblind', 'color filter', 'color blind filter', 'enable color blind'],
     'reset page': ['reset', 'reset page', 'undo changes', 'restore page'],
     'finger tracking': ['finger tracking', 'start finger tracking', 'hand tracking', 'gesture control'],
     'stop finger tracking': ['stop finger tracking', 'stop tracking', 'stop gestures'],
@@ -505,6 +552,11 @@ document.getElementById("send").onclick = async () => {
         case 'describe images':
           document.getElementById("describe-images").click();
           message = "Describing images on the page";
+          executed = true;
+          break;
+        case 'color blind':
+          document.getElementById("colorblind").click();
+          message = isColorBlindActive ? "Color blind filter activated" : "Color blind filter deactivated";
           executed = true;
           break;
         case 'reset page':
@@ -1491,6 +1543,76 @@ document.querySelectorAll('.intensity-btn').forEach(btn => {
   };
 });
 // ========== END FOCUS MODE SETTINGS ==========
+
+// ========== COLOR BLIND FILTER SETTINGS ==========
+// Load saved color blind preferences on startup
+chrome.storage.sync.get(['colorBlindFilter', 'colorBlindMode'], (result) => {
+  if (result.colorBlindFilter) {
+    colorBlindFilter = result.colorBlindFilter;
+    document.querySelectorAll('.cb-filter-btn').forEach(btn => {
+      if (btn.dataset.filter === colorBlindFilter) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+  }
+  if (result.colorBlindMode) {
+    colorBlindMode = result.colorBlindMode;
+    document.querySelectorAll('.cb-mode-btn').forEach(btn => {
+      if (btn.dataset.mode === colorBlindMode) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+  }
+});
+
+// Handle filter type button clicks
+document.querySelectorAll('.cb-filter-btn').forEach(btn => {
+  btn.onclick = () => {
+    colorBlindFilter = btn.dataset.filter;
+
+    // Update UI - highlight selected button
+    document.querySelectorAll('.cb-filter-btn').forEach(b =>
+      b.classList.remove('active')
+    );
+    btn.classList.add('active');
+
+    // Save preference
+    chrome.storage.sync.set({ colorBlindFilter });
+
+    // If active, re-apply with new filter
+    if (isColorBlindActive) {
+      sendToActiveTab({ type: "COLORBLIND_ON", filter: colorBlindFilter, mode: colorBlindMode });
+      log(`Color blind filter changed to ${colorBlindFilter}.`);
+    }
+  };
+});
+
+// Handle mode toggle button clicks
+document.querySelectorAll('.cb-mode-btn').forEach(btn => {
+  btn.onclick = () => {
+    colorBlindMode = btn.dataset.mode;
+
+    // Update UI - highlight selected button
+    document.querySelectorAll('.cb-mode-btn').forEach(b =>
+      b.classList.remove('active')
+    );
+    btn.classList.add('active');
+
+    // Save preference
+    chrome.storage.sync.set({ colorBlindMode });
+
+    // If active, re-apply with new mode
+    if (isColorBlindActive) {
+      sendToActiveTab({ type: "COLORBLIND_ON", filter: colorBlindFilter, mode: colorBlindMode });
+      log(`Color blind mode changed to ${colorBlindMode}.`);
+    }
+  };
+});
+// ========== END COLOR BLIND FILTER SETTINGS ==========
 
 // ========== AUTO-SUGGEST MODE ON PAGE LOAD ==========
 async function analyzeAndSuggest() {

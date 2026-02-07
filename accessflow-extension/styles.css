@@ -609,6 +609,79 @@ input:focus-visible {
   font-weight: 600;
 }
 
+/* ========== Color Blind Filter Controls ========== */
+#colorblind-controls {
+  background: var(--soft);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease;
+  margin-top: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.cb-filter-selector {
+  display: flex;
+  gap: 6px;
+}
+
+.cb-filter-btn {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  text-align: center;
+}
+
+.cb-filter-btn:hover {
+  background: var(--soft);
+  transform: translateY(-1px);
+}
+
+.cb-filter-btn.active {
+  background: var(--focus);
+  color: white;
+  border-color: var(--focus);
+  font-weight: 600;
+}
+
+.cb-mode-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.cb-mode-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  text-align: center;
+}
+
+.cb-mode-btn:hover {
+  background: var(--soft);
+  transform: translateY(-1px);
+}
+
+.cb-mode-btn.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
 /* ========== UI Cleanup: Sections ========== */
 .section {
   background: white;

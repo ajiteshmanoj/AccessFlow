@@ -103,6 +103,10 @@
       document.getElementById(OVERLAY_ID)?.remove();
       document.getElementById(SIMPLIFY_STYLE_ID)?.remove();
 
+      // Remove color blind filter
+      document.getElementById("accessflow-cb-svg")?.remove();
+      document.getElementById("accessflow-colorblind")?.remove();
+
       // Remove highlights
       document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
 
@@ -1879,6 +1883,62 @@
       if (msg?.type === "STOP_FINGER_CURSOR") {
         removeFingerCursor();
         sendResponse({ ok: true });
+        return true;
+      }
+      // ========== COLOR BLIND FILTER HANDLERS ==========
+      if (msg?.type === "COLORBLIND_ON") {
+        // Remove any existing filter
+        document.getElementById("accessflow-cb-svg")?.remove();
+        document.getElementById("accessflow-colorblind")?.remove();
+        document.documentElement.style.removeProperty("filter");
+
+        const filter = msg.filter || "deuteranopia";
+        const mode = msg.mode || "correct";
+
+        // Machado 2009 simulation matrices & daltonization correction matrices
+        const matrices = {
+          deuteranopia: {
+            simulate: "0.367  0.861 -0.228  0  0  0.280  0.673  0.047  0  0 -0.012  0.043  0.969  0  0  0  0  0  1  0",
+            correct:  "0.625  0.375  0      0  0  0.700  0.300  0      0  0  0      0.300  0.700  0  0  0  0  0  1  0"
+          },
+          protanopia: {
+            simulate: "0.152  1.053 -0.205  0  0  0.115  0.786  0.099  0  0 -0.004 -0.048  1.052  0  0  0  0  0  1  0",
+            correct:  "0.567  0.433  0      0  0  0.558  0.442  0      0  0  0      0.242  0.758  0  0  0  0  0  1  0"
+          },
+          tritanopia: {
+            simulate: "1.256 -0.077 -0.179  0  0 -0.078  0.931  0.148  0  0  0.005  0.691  0.304  0  0  0  0  0  1  0",
+            correct:  "0.950  0.050  0      0  0  0      0.433  0.567  0  0  0      0.475  0.525  0  0  0  0  0  1  0"
+          }
+        };
+
+        const matrixValues = matrices[filter]?.[mode];
+        if (!matrixValues) {
+          sendResponse({ ok: false, message: "Unknown filter/mode combination." });
+          return true;
+        }
+
+        // Create SVG with feColorMatrix filter
+        const svgNS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(svgNS, "svg");
+        svg.id = "accessflow-cb-svg";
+        svg.setAttribute("style", "position:absolute;width:0;height:0;");
+        svg.innerHTML = `<defs><filter id="af-cb-filter"><feColorMatrix type="matrix" values="${matrixValues}"/></filter></defs>`;
+        document.body.appendChild(svg);
+
+        // Apply filter via dedicated style element
+        const style = document.createElement("style");
+        style.id = "accessflow-colorblind";
+        style.textContent = "html { filter: url(#af-cb-filter) !important; }";
+        document.head.appendChild(style);
+
+        sendResponse({ ok: true, message: `Color blind filter applied: ${filter} (${mode}).` });
+        return true;
+      }
+      if (msg?.type === "COLORBLIND_OFF") {
+        document.getElementById("accessflow-cb-svg")?.remove();
+        document.getElementById("accessflow-colorblind")?.remove();
+        document.documentElement.style.removeProperty("filter");
+        sendResponse({ ok: true, message: "Color blind filter removed." });
         return true;
       }
       // ========== SIMPLIFY MESSAGE HANDLERS ==========

@@ -606,14 +606,7 @@ document.getElementById("describe-images").onclick = async () => {
     ).join("\n");
 
     log(allText);
-
-    // Show stop button during image description
-    showNarrationControls(true);
-
     await speak(allText);
-
-    // Hide controls after speaking completes
-    showNarrationControls(false);
   } catch (e) {
     log("Error calling describe-images API: " + e.message);
   }

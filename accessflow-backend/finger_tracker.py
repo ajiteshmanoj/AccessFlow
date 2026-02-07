@@ -41,7 +41,7 @@ connected_clients = set()
 # ── Thresholds ───────────────────────────────────────────────────────
 PINCH_ON_THRESHOLD   = 0.04   # distance to START a pinch (must TOUCH to trigger)
 PINCH_OFF_THRESHOLD  = 0.07   # distance to END a pinch (closer gap for tighter control)
-SCROLL_SENSITIVITY   = 0.012  # min vertical delta per frame to trigger scroll
+SCROLL_SENSITIVITY   = 0.020  # min vertical delta per frame to trigger scroll
 DOUBLE_PINCH_WINDOW  = 1.2    # seconds — max gap between two pinches for double-pinch (more forgiving)
 TAP_MAX_DURATION     = 0.8    # seconds — max pinch duration to count as a "tap" (VERY forgiving)
 HOLD_THRESHOLD       = 1.0    # seconds — pinch held still = highlight (longer hold = less accidental)
@@ -56,6 +56,7 @@ pinch_start_time  = 0.0        # when current pinch started
 pinch_start_pos   = (0.0, 0.0) # where pinch started (for drag detection)
 last_pinch_up     = 0.0        # timestamp of last pinch release (for double-pinch)
 scroll_anchor_y   = None       # y-position when scroll started
+scroll_direction_locked = None # locked scroll direction: "up" or "down" or None
 hold_fired        = False      # did we already fire a highlight for this pinch?
 pinch_dist_smooth = 0.0        # smoothed pinch distance (rolling average)
 
@@ -109,15 +110,42 @@ def get_pinch_distance(hand_landmarks):
 
 
 def is_pinching(hand_landmarks):
-    """Pinch detection with hysteresis. Uses raw distance for responsiveness."""
+    """
+    Pinch detection with hysteresis. Uses raw distance for responsiveness.
+    STRICT: Only thumb + index finger pinch. All other fingers must be DOWN.
+    """
     global pinch_was_down
+
+    # Check if middle finger is extended (peace sign / scrolling) - NOT a pinch!
+    middle_extended = is_finger_extended(hand_landmarks, 12, 10)
+    if middle_extended:
+        return False  # Peace sign detected, not a pinch
+
+    # Check if ring finger is extended (3-finger reset) - NOT a pinch!
+    ring_extended = is_finger_extended(hand_landmarks, 16, 14)
+    if ring_extended:
+        return False  # 3 fingers detected, not a pinch
+
+    # Now check thumb-index distance
+    # Note: We DON'T require index to be extended because it curls down during pinch!
     raw_dist = get_pinch_distance(hand_landmarks)
+
+    # DEBUG: Print pinch distance
+    if raw_dist < 0.08:  # Close to threshold
+        print(f"👆 Pinch distance: {raw_dist:.4f} (threshold: {PINCH_ON_THRESHOLD:.4f})")
+
     if pinch_was_down:
         # Must open past OFF threshold to release (prevents jitter)
-        return raw_dist < PINCH_OFF_THRESHOLD
+        is_pinch = raw_dist < PINCH_OFF_THRESHOLD
+        if not is_pinch:
+            print(f"🔓 Pinch RELEASED (dist: {raw_dist:.4f})")
+        return is_pinch
     else:
         # Must close past ON threshold to start
-        return raw_dist < PINCH_ON_THRESHOLD
+        is_pinch = raw_dist < PINCH_ON_THRESHOLD
+        if is_pinch:
+            print(f"🔒 Pinch DETECTED! (dist: {raw_dist:.4f})")
+        return is_pinch
 
 
 def midpoint(hand_landmarks):
@@ -128,9 +156,10 @@ def midpoint(hand_landmarks):
 
 
 def reset_gesture_state():
-    global pinch_was_down, scroll_anchor_y, hold_fired
+    global pinch_was_down, scroll_anchor_y, scroll_direction_locked, hold_fired
     pinch_was_down = False
     scroll_anchor_y = None
+    scroll_direction_locked = None
     hold_fired = False
 
 
@@ -150,6 +179,15 @@ def is_two_finger_scroll(hand_landmarks):
     return index_up and middle_up and not ring_up and not pinky_up
 
 
+def is_three_finger_reset(hand_landmarks):
+    """Detect 3 fingers up (index + middle + ring): unlocks scroll direction."""
+    index_up  = is_finger_extended(hand_landmarks, 8, 6)
+    middle_up = is_finger_extended(hand_landmarks, 12, 10)
+    ring_up   = is_finger_extended(hand_landmarks, 16, 14)
+    pinky_up  = is_finger_extended(hand_landmarks, 20, 18)
+    return index_up and middle_up and ring_up and not pinky_up
+
+
 def process_gestures(hand_landmarks, now):
     """
     State machine that processes hand landmarks into gesture events.
@@ -160,14 +198,23 @@ def process_gestures(hand_landmarks, now):
       - Pinch (thumb+index)      → double-pinch = click, hold = highlight
     """
     global pinch_was_down, pinch_start_time, pinch_start_pos
-    global last_pinch_up, scroll_anchor_y, hold_fired
+    global last_pinch_up, scroll_anchor_y, scroll_direction_locked, hold_fired
 
     index_tip = hand_landmarks[8]
     x, y = index_tip.x, index_tip.y
     pinching = is_pinching(hand_landmarks)
     mid = midpoint(hand_landmarks)
 
-    # ── Two-finger scroll (peace sign) ────────────────────────────
+    # ── Three-finger reset (unlocks scroll direction) ────────────
+    if is_three_finger_reset(hand_landmarks) and not pinching and not pinch_was_down:
+        if scroll_direction_locked is not None:
+            print(f"🔓 3 FINGERS detected → Direction UNLOCKED!")
+            scroll_direction_locked = None
+            scroll_anchor_y = None
+        return {"detected": True, "mode": "cursor", "x": x, "y": y,
+                "gesture": "reset"}
+
+    # ── Two-finger scroll (peace sign) with direction locking ─────
     # IMPORTANT: Don't enter scroll mode if we're mid-pinch — releasing a pinch
     # causes index finger to extend, which can momentarily match peace sign.
     # We need the release to reach the "Pinch just released" block below.
@@ -180,65 +227,60 @@ def process_gestures(hand_landmarks, now):
 
         dy = mid_y - scroll_anchor_y
         scroll_dir = None
-        if dy < -SCROLL_SENSITIVITY:
-            scroll_dir = "scroll_down"   # hand up = page down
-            scroll_anchor_y = mid_y
-        elif dy > SCROLL_SENSITIVITY:
-            scroll_dir = "scroll_up"     # hand down = page up
-            scroll_anchor_y = mid_y
+
+        # Direction locking: first movement establishes direction
+        if scroll_direction_locked is None:
+            if dy < -SCROLL_SENSITIVITY:
+                scroll_direction_locked = "down"
+                scroll_dir = "scroll_down"
+                scroll_anchor_y = mid_y
+                print(f"🔒 Locked to SCROLL DOWN")
+            elif dy > SCROLL_SENSITIVITY:
+                scroll_direction_locked = "up"
+                scroll_dir = "scroll_up"
+                scroll_anchor_y = mid_y
+                print(f"🔒 Locked to SCROLL UP")
+        else:
+            # Direction is locked - only scroll in that direction
+            if scroll_direction_locked == "down":
+                if dy < -SCROLL_SENSITIVITY:
+                    scroll_dir = "scroll_down"
+                    scroll_anchor_y = mid_y
+            elif scroll_direction_locked == "up":
+                if dy > SCROLL_SENSITIVITY:
+                    scroll_dir = "scroll_up"
+                    scroll_anchor_y = mid_y
 
         hold_fired = False
 
         return {"detected": True, "mode": "scroll", "x": x, "y": y,
                 "scroll": scroll_dir}
 
-    # Not scrolling — reset scroll anchor
+    # Not scrolling — reset scroll anchor (but keep direction lock!)
     scroll_anchor_y = None
 
-    # ── Pinch just started ───────────────────────────────────────
+    # ── Pinch just started → INSTANT CLICK (like mouse button) ───
     if pinching and not pinch_was_down:
         pinch_was_down = True
         pinch_start_time = now
         pinch_start_pos = (x, y)  # use index finger tip (stable, unlike midpoint)
         hold_fired = False
+        print(f"🖱️  CLICK! (instant on pinch down)")
         return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                "gesture": "pinch_start"}
+                "gesture": "click"}  # Click immediately!
 
-    # ── Pinch held ───────────────────────────────────────────────
+    # ── Pinch held → just track cursor (click already fired) ─────
     if pinching and pinch_was_down:
-        elapsed = now - pinch_start_time
-
-        # Held still long enough → highlight
-        if elapsed >= HOLD_THRESHOLD and not hold_fired:
-            hold_fired = True
-            return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                    "gesture": "highlight"}
-
-        # Still holding
+        # Just track cursor position, no additional action
         return {"detected": True, "mode": "cursor", "x": x, "y": y,
                 "gesture": "pinch_hold"}
 
-    # ── Pinch just released ──────────────────────────────────────
+    # ── Pinch just released → no action (click already happened) ─
     if not pinching and pinch_was_down:
         pinch_was_down = False
-        elapsed = now - pinch_start_time
-        # Use index finger tip for drift (midpoint shifts inherently when pinching)
-        drift = math.sqrt((x - pinch_start_pos[0])**2 +
-                          (y - pinch_start_pos[1])**2)
-
-        # Count as a "tap" if it was short — quick pinch = click!
-        was_tap = elapsed < TAP_MAX_DURATION
-        print(f"  ✅ PINCH RELEASED! elapsed={elapsed:.3f}s → {'CLICK!' if was_tap else 'HOLD (no click)'}")
-
-        if was_tap:
-            # Single quick pinch → click!
-            print(f"  🖱️  SENDING CLICK COMMAND!")
-            return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                    "gesture": "click"}
-        else:
-            # Long pinch → just release (no action)
-            return {"detected": True, "mode": "cursor", "x": x, "y": y,
-                    "gesture": "pinch_release"}
+        # Click already fired on pinch down, just release
+        return {"detected": True, "mode": "cursor", "x": x, "y": y,
+                "gesture": "point"}
 
     # ── Not pinching — just pointing ─────────────────────────────
     pinch_was_down = False
@@ -290,17 +332,33 @@ async def finger_tracker():
         print("\n  AccessFlow Finger Tracker")
         print("  ─────────────────────────────────")
         print("  Point (1 finger)     → move cursor")
-        print("  Peace sign (2 fingers) → scroll up/down")
-        print("  Double pinch         → click / select")
-        print("  Pinch + hold         → highlight element")
+        print("  Peace sign (2 fingers) → scroll (direction locks)")
+        print("  3 fingers (add ring)  → unlock scroll direction")
+        print("  Pinch (thumb+index)   → click instantly")
         print("  Press q / ESC        → quit\n")
 
+        # Create small window at top-left corner
+        window_name = 'AccessFlow Finger Tracker'
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+        # Force window to be tiny
+        cv2.resizeWindow(window_name, 120, 90)
+        cv2.moveWindow(window_name, 10, 30)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+
         frame_timestamp_ms = 0
+        first_frame = True
 
         while cap.isOpened():
             success, image = cap.read()
             if not success:
                 continue
+
+            # Force resize on first frame to ensure it sticks
+            if first_frame:
+                cv2.resizeWindow(window_name, 120, 90)
+                cv2.moveWindow(window_name, 10, 30)
+                first_frame = False
 
             image = cv2.flip(image, 1)
             rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -361,7 +419,12 @@ async def finger_tracker():
 
             await broadcast(json.dumps(data))
 
-            cv2.imshow('AccessFlow Finger Tracker', image)
+            # Resize image for small display while maintaining aspect ratio
+            h, w = image.shape[:2]
+            display_width = 240
+            display_height = int(h * (display_width / w))
+            display_image = cv2.resize(image, (display_width, display_height))
+            cv2.imshow('AccessFlow Finger Tracker', display_image)
             if cv2.waitKey(5) & 0xFF in [27, ord('q')]:
                 break
 

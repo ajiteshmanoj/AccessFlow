@@ -541,3 +541,56 @@ input:focus-visible {
   border-color: var(--focus);
   font-weight: 600;
 }
+
+/* ========== UI Cleanup: Sections ========== */
+.section {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+/* Collapsible Settings */
+.section details summary {
+  list-style: none;
+  outline: none;
+}
+
+.section details summary::-webkit-details-marker {
+  display: none;
+}
+
+.section details[open] summary {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+}
+
+.section details summary:hover {
+  opacity: 0.8;
+}
+
+/* Tighter grid spacing */
+.section .grid {
+  gap: 8px;
+}
+
+/* Cleaner log output */
+#log {
+  max-height: 100px;
+  overflow-y: auto;
+  font-size: 11px;
+  color: var(--muted);
+}

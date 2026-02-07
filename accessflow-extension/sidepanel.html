@@ -7,102 +7,109 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <!-- Header -->
     <h2>AccessFlow</h2>
-    <div class="sub">Inclusive-design overlay for <span class="pill">any website</span></div>
+    <div class="sub">AI-powered accessibility for <span class="pill">any website</span></div>
 
-    <div class="grid">
-      <!-- Inclusive Mode with controls -->
-      <div class="mode-section">
-        <button id="inclusive" class="primary">✅ Inclusive Mode<br><span class="pill">bigger text</span> <span class="pill">bigger buttons</span> <span class="pill">more whitespace</span></button>
-        <div id="inclusive-controls" style="display:none;">
-          <label for="font-size-slider">
-            Font Size: <span id="font-size-value">18</span>px
-          </label>
-          <input
-            type="range"
-            id="font-size-slider"
-            min="10"
-            max="40"
-            value="18"
-            step="1"
-          />
-        </div>
+    <!-- Voice Command Input (TOP - Most Important) -->
+    <div class="section">
+      <h3>🎤 Voice Commands</h3>
+      <div class="row">
+        <input id="cmd" placeholder='Say "search for shoes" or "click login"' />
+        <button id="mic" title="Voice input">🎤</button>
+        <button id="send">Send</button>
       </div>
+      <div id="voice-status" style="font-size:11px; color:#666; margin-top:4px; min-height:16px;"></div>
+      <div id="log" style="margin-top:10px; font-size:12px;"></div>
+    </div>
 
-      <!-- Focus Mode with intensity controls -->
-      <div class="mode-section">
-        <button id="focus">🎯 Focus Mode<br><span class="pill">hide clutter</span> <span class="pill">highlight main</span></button>
-        <div id="focus-controls" style="display:none;">
-          <div class="intensity-selector">
-            <button class="intensity-btn" data-level="light">Light</button>
-            <button class="intensity-btn active" data-level="medium">Medium</button>
-            <button class="intensity-btn" data-level="aggressive">Aggressive</button>
+    <!-- Quick Actions (Main Modes) -->
+    <div class="section">
+      <h3>⚡ Quick Actions</h3>
+      <div class="grid">
+        <!-- Inclusive Mode -->
+        <div class="mode-section">
+          <button id="inclusive" class="primary">✅ Inclusive Mode</button>
+          <div id="inclusive-controls" style="display:none; margin-top:8px;">
+            <label for="font-size-slider" style="font-size:12px;">
+              Font Size: <span id="font-size-value">18</span>px
+            </label>
+            <input
+              type="range"
+              id="font-size-slider"
+              min="10"
+              max="40"
+              value="18"
+              step="1"
+              style="width:100%;"
+            />
           </div>
         </div>
-      </div>
 
-      <button id="tunnel">🧭 Task Tunnel<br><span class="pill">step-by-step forms</span></button>
-      <button id="simplify">🧠 Simplify Page<br><span class="pill">AI-powered</span> <span class="pill">adaptive</span></button>
-      <button id="reset" class="danger">↩ Reset Page</button>
-      <button id="reset-defaults">⚙️ Reset to Defaults</button>
-    </div>
+        <!-- Focus Mode -->
+        <div class="mode-section">
+          <button id="focus">🎯 Focus Mode</button>
+          <div id="focus-controls" style="display:none; margin-top:8px;">
+            <div class="intensity-selector">
+              <button class="intensity-btn" data-level="light">Light</button>
+              <button class="intensity-btn active" data-level="medium">Medium</button>
+              <button class="intensity-btn" data-level="aggressive">Strong</button>
+            </div>
+          </div>
+        </div>
 
-    <hr/>
-
-    <!-- Content Description & Narration (GPT-4o-mini) -->
-    <div class="grid">
-      <button id="describe-images">👁 Describe Images</button>
-      <button id="narrate-page">📖 Read Page</button>
-    </div>
-    <div id="narration-panel" style="display:none; margin-top:8px;">
-      <div id="topic-chips"></div>
-      <div id="narration-actions">
-        <button id="read-all" class="primary">📖 Read Everything</button>
-        <button id="narration-done" class="danger">✕ Done</button>
-      </div>
-    </div>
-    <div id="image-description-controls" style="display:none; margin-top:8px;">
-      <button id="next-image" class="primary">⏭ Next Image</button>
-      <button id="stop-image-description" class="danger">🛑 Stop</button>
-    </div>
-
-    <hr/>
-
-    <!-- Finger Tracking -->
-    <div class="grid">
-      <button id="finger-tracking">👆 Finger Tracking<br><span class="pill">hand gestures</span></button>
-    </div>
-
-    <hr/>
-
-    <div id="profile-section">
-      <div id="profile-header">
-        <span>⚙ Your Profile</span>
-        <span id="profile-status" class="pill">No preferences saved</span>
-      </div>
-      <div id="profile-settings">
-        <label class="profile-toggle">
-          <input type="checkbox" id="pref-auto-listen" />
-          <span>Auto-start voice input</span>
-        </label>
-        <label class="profile-toggle">
-          <input type="checkbox" id="pref-auto-read" />
-          <span>Auto-read pages aloud</span>
-        </label>
-        <div id="profile-active-modes"></div>
-        <button id="clear-profile" class="danger">Clear Saved Preferences</button>
+        <button id="simplify">🧠 Simplify Page</button>
+        <button id="reset" class="danger">↩ Reset Page</button>
       </div>
     </div>
 
-    <hr/>
+    <!-- Accessibility Tools -->
+    <div class="section">
+      <h3>🔧 Accessibility Tools</h3>
+      <div class="grid">
+        <button id="narrate-page">📖 Read Page</button>
+        <button id="describe-images">👁 Describe Images</button>
+        <button id="finger-tracking">👆 Finger Tracking</button>
+        <button id="tunnel">🧭 Task Tunnel</button>
+      </div>
 
-    <div class="row">
-      <input id="cmd" placeholder='Try: "highlight search" or "click login"' />
-      <button id="mic" title="Voice input">🎤</button>
-      <button id="send">Send</button>
+      <!-- Narration Panel (Hidden by default) -->
+      <div id="narration-panel" style="display:none; margin-top:12px;">
+        <div id="topic-chips" style="margin-bottom:8px;"></div>
+        <div id="narration-actions">
+          <button id="read-all" class="primary">📖 Read Everything</button>
+          <button id="narration-done" class="danger">✕ Done</button>
+        </div>
+      </div>
+
+      <!-- Image Description Controls (Hidden by default) -->
+      <div id="image-description-controls" style="display:none; margin-top:12px;">
+        <button id="next-image" class="primary">⏭ Next Image</button>
+        <button id="stop-image-description" class="danger">🛑 Stop</button>
+      </div>
     </div>
-    <div id="voice-status" style="font-size:11px; color:#666; margin-top:4px; min-height:16px;"></div>
-    <div id="log" style="margin-top:10px;"></div>
+
+    <!-- Profile & Settings (Collapsible) -->
+    <div class="section">
+      <details>
+        <summary style="cursor:pointer; font-weight:600; padding:8px 0;">
+          ⚙️ Settings <span id="profile-status" class="pill" style="margin-left:8px;">No preferences saved</span>
+        </summary>
+        <div id="profile-settings" style="padding-top:12px;">
+          <label class="profile-toggle">
+            <input type="checkbox" id="pref-auto-listen" />
+            <span>Auto-start voice input</span>
+          </label>
+          <label class="profile-toggle">
+            <input type="checkbox" id="pref-auto-read" />
+            <span>Auto-read pages aloud</span>
+          </label>
+          <div id="profile-active-modes" style="margin-top:8px;"></div>
+          <button id="clear-profile" class="danger" style="margin-top:12px;">Clear Saved Preferences</button>
+          <button id="reset-defaults" style="margin-top:8px;">⚙️ Reset to Defaults</button>
+        </div>
+      </details>
+    </div>
 
     <script src="sidepanel.js"></script>
   </body>

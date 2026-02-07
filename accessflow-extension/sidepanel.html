@@ -11,11 +11,40 @@
     <div class="sub">Inclusive-design overlay for <span class="pill">any website</span></div>
 
     <div class="grid">
-      <button id="inclusive" class="primary">✅ Inclusive Mode<br><span class="pill">bigger text</span> <span class="pill">bigger buttons</span> <span class="pill">more whitespace</span></button>
-      <button id="focus">🎯 Focus Mode<br><span class="pill">hide clutter</span> <span class="pill">highlight main</span></button>
+      <!-- Inclusive Mode with controls -->
+      <div class="mode-section">
+        <button id="inclusive" class="primary">✅ Inclusive Mode<br><span class="pill">bigger text</span> <span class="pill">bigger buttons</span> <span class="pill">more whitespace</span></button>
+        <div id="inclusive-controls" style="display:none;">
+          <label for="font-size-slider">
+            Font Size: <span id="font-size-value">18</span>px
+          </label>
+          <input
+            type="range"
+            id="font-size-slider"
+            min="10"
+            max="40"
+            value="18"
+            step="1"
+          />
+        </div>
+      </div>
+
+      <!-- Focus Mode with intensity controls -->
+      <div class="mode-section">
+        <button id="focus">🎯 Focus Mode<br><span class="pill">hide clutter</span> <span class="pill">highlight main</span></button>
+        <div id="focus-controls" style="display:none;">
+          <div class="intensity-selector">
+            <button class="intensity-btn" data-level="light">Light</button>
+            <button class="intensity-btn active" data-level="medium">Medium</button>
+            <button class="intensity-btn" data-level="aggressive">Aggressive</button>
+          </div>
+        </div>
+      </div>
+
       <button id="tunnel">🧭 Task Tunnel<br><span class="pill">step-by-step forms</span></button>
       <button id="simplify">🧠 Simplify Page<br><span class="pill">AI-powered</span> <span class="pill">adaptive</span></button>
       <button id="reset" class="danger">↩ Reset Page</button>
+      <button id="reset-defaults">⚙️ Reset to Defaults</button>
     </div>
 
     <hr/>

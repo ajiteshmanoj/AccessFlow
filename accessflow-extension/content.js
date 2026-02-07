@@ -26,10 +26,35 @@
     });
   }
 
-  function inclusiveMode() {
-    setStyle(`
-      /* Readability baseline */
-      html, body { font-size: 18px !important; line-height: 1.7 !important; }
+  // ========== ENHANCED INCLUSIVE MODE (Works on Google & Dynamic Sites) ==========
+  let inclusiveModeObserver = null;
+  let inclusiveModeInterval = null;
+  let currentInclusiveFontSize = 18;
+
+  function generateInclusiveCSS(fontSize) {
+    return `
+      /* CSS Variables for better inheritance */
+      :root {
+        --af-font-size: ${fontSize}px !important;
+        --af-line-height: 1.7 !important;
+        --af-letter-spacing: 0.02em !important;
+      }
+
+      /* Readability baseline - very high specificity */
+      html, html body {
+        font-size: ${fontSize}px !important;
+        line-height: 1.7 !important;
+      }
+
+      /* Apply to all text elements with high specificity */
+      html body p, html body span, html body div, html body a,
+      html body li, html body td, html body th,
+      html body h1, html body h2, html body h3, html body h4, html body h5, html body h6,
+      html body label, html body button {
+        font-size: ${fontSize}px !important;
+        line-height: 1.7 !important;
+      }
+
       body { padding: 16px !important; }
       p, li { letter-spacing: 0.02em !important; }
 
@@ -52,23 +77,176 @@
 
       /* Highlight class */
       .${HILITE_CLASS} { outline: 4px solid #f59e0b !important; outline-offset: 3px !important; border-radius: 8px !important; }
-    `);
+    `;
   }
 
-  function focusMode() {
-    // Simple heuristic: hide common clutter containers (ads, sidebars, popups)
-    const selectorsToHide = [
-      "aside", "nav", "footer",
-      "[class*='sidebar']", "[id*='sidebar']",
-      "[class*='advert']", "[id*='advert']", "[class*='ad-']", "[id*='ad-']",
-      "[class*='cookie']", "[id*='cookie']",
-      "[role='dialog']", ".modal", ".popup"
-    ];
+  function applyDirectStyles(fontSize) {
+    // Apply to html and body
+    document.documentElement.style.setProperty('font-size', `${fontSize}px`, 'important');
+    document.body.style.setProperty('font-size', `${fontSize}px`, 'important');
+    document.body.style.setProperty('line-height', '1.7', 'important');
+
+    // Set CSS variables at root
+    document.documentElement.style.setProperty('--af-font-size', `${fontSize}px`);
+    document.documentElement.style.setProperty('--af-line-height', '1.7');
+
+    // Apply to ALL text-containing elements (more aggressive)
+    const textElements = document.querySelectorAll('p, span, div, a, li, td, th, h1, h2, h3, h4, h5, h6, label, button, input, textarea');
+    textElements.forEach(el => {
+      el.style.setProperty('font-size', `${fontSize}px`, 'important');
+      el.style.setProperty('line-height', '1.7', 'important');
+    });
+  }
+
+  function injectIntoShadowRoots(cssText) {
+    // Traverse all elements and inject into shadow roots
+    document.querySelectorAll('*').forEach(el => {
+      if (el.shadowRoot) {
+        let style = el.shadowRoot.getElementById(STYLE_ID);
+        if (!style) {
+          style = document.createElement('style');
+          style.id = STYLE_ID;
+          el.shadowRoot.appendChild(style);
+        }
+        style.textContent = cssText;
+      }
+    });
+  }
+
+  function applySiteSpecificOverrides(fontSize) {
+    const hostname = window.location.hostname;
+
+    // Google-specific overrides (search results, Gmail, etc.)
+    if (hostname.includes('google.com')) {
+      const googleSelectors = [
+        '.g', '#rcnt', '.s', '#search', 'body',
+        '.RNNXgb', '.gLFyf', // Search box
+        '.v7W49e', // Result snippets
+        '#center_col', // Main column
+      ];
+
+      googleSelectors.forEach(sel => {
+        document.querySelectorAll(sel).forEach(el => {
+          el.style.setProperty('font-size', `${fontSize}px`, 'important');
+          el.style.setProperty('line-height', '1.7', 'important');
+        });
+      });
+    }
+  }
+
+  function startInclusiveModeObserver(fontSize) {
+    // Stop existing observer
+    if (inclusiveModeObserver) {
+      inclusiveModeObserver.disconnect();
+    }
+
+    const cssText = generateInclusiveCSS(fontSize);
+
+    // Create observer to handle dynamic content
+    inclusiveModeObserver = new MutationObserver(() => {
+      // Re-inject into new shadow roots
+      injectIntoShadowRoots(cssText);
+      // Re-apply site-specific overrides
+      applySiteSpecificOverrides(fontSize);
+    });
+
+    // Start observing
+    inclusiveModeObserver.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  function inclusiveMode(fontSize = 18) {
+    currentInclusiveFontSize = fontSize;
+
+    // 1. Generate CSS
+    const cssText = generateInclusiveCSS(fontSize);
+
+    // 2. Inject into main document
+    setStyle(cssText);
+
+    // 3. Apply direct styles (harder to override)
+    applyDirectStyles(fontSize);
+
+    // 4. Inject into Shadow DOM
+    injectIntoShadowRoots(cssText);
+
+    // 5. Apply site-specific overrides
+    applySiteSpecificOverrides(fontSize);
+
+    // 6. Watch for dynamic content
+    startInclusiveModeObserver(fontSize);
+
+    // 7. Continuous re-application (for stubborn sites)
+    if (inclusiveModeInterval) clearInterval(inclusiveModeInterval);
+    inclusiveModeInterval = setInterval(() => {
+      applyDirectStyles(fontSize);
+      applySiteSpecificOverrides(fontSize);
+    }, 300); // Re-apply every 300ms
+  }
+  // ========== END ENHANCED INCLUSIVE MODE ==========
+
+  function focusMode(intensity = "medium") {
+    let selectorsToHide = [];
+
+    // Light mode - minimal hiding (ads, popups, cookies only)
+    if (intensity === "light") {
+      selectorsToHide = [
+        "[class*='advert']", "[id*='advert']",
+        "[class*='ad-']", "[id*='ad-']",
+        "[class*='cookie']", "[id*='cookie']",
+        "[role='dialog']", ".modal", ".popup"
+      ];
+    }
+    // Medium mode - current behavior (default)
+    else if (intensity === "medium") {
+      selectorsToHide = [
+        "aside", "nav", "footer",
+        "[class*='sidebar']", "[id*='sidebar']",
+        "[class*='advert']", "[id*='advert']",
+        "[class*='ad-']", "[id*='ad-']",
+        "[class*='cookie']", "[id*='cookie']",
+        "[role='dialog']", ".modal", ".popup"
+      ];
+    }
+    // Aggressive mode - maximum hiding
+    else if (intensity === "aggressive") {
+      selectorsToHide = [
+        // Everything from medium
+        "aside", "nav", "footer",
+        "[class*='sidebar']", "[id*='sidebar']",
+        "[class*='advert']", "[id*='advert']",
+        "[class*='ad-']", "[id*='ad-']",
+        "[class*='cookie']", "[id*='cookie']",
+        "[role='dialog']", ".modal", ".popup",
+
+        // Additional aggressive selectors - more specific to avoid hiding main content
+        "header:not(main header):not(article header)",
+        "section[class*='comment']:not(main section):not(article section)",
+        "div[class*='comment']:not(main div):not(article div)",
+        "aside[class*='related']",
+        "div[class*='social-share']",
+        "div[class*='share-buttons']",
+        "nav[class*='breadcrumb']",
+        "div[class*='author-bio']",
+        "div[class*='newsletter']",
+        "form[class*='subscribe']"
+      ];
+    }
 
     selectorsToHide.forEach((sel) => {
       document.querySelectorAll(sel).forEach((el) => {
-        // Don't hide the primary nav if it's the only way to reach content; keep it simple for demo
+        // Triple check: don't hide main content or body
+        if (el === document.body) return;
         if (el.closest("main")) return;
+        if (el.closest("article")) return;
+        if (el.closest("[role='main']")) return;
+
+        // Don't hide if it's a large content container
+        const rect = el.getBoundingClientRect();
+        if (rect.height > window.innerHeight * 0.5) return; // Don't hide large containers
+
         el.style.display = "none";
         el.setAttribute("data-accessflow-hidden", "1");
       });
@@ -1136,18 +1314,73 @@
         return true;
       }
       if (msg?.type === "INCLUSIVE_ON") {
-        inclusiveMode();
-        sendResponse({ ok: true, message: "Inclusive Mode applied." });
+        const fontSize = msg.fontSize || 18;
+        inclusiveMode(fontSize);
+        sendResponse({ ok: true, message: `Inclusive Mode applied with ${fontSize}px font.` });
+        return true;
+      }
+      if (msg?.type === "INCLUSIVE_OFF") {
+        // Stop observer
+        if (inclusiveModeObserver) {
+          inclusiveModeObserver.disconnect();
+          inclusiveModeObserver = null;
+        }
+        // Stop interval
+        if (inclusiveModeInterval) {
+          clearInterval(inclusiveModeInterval);
+          inclusiveModeInterval = null;
+        }
+        // Remove main styles
+        document.getElementById(STYLE_ID)?.remove();
+        // Remove shadow DOM styles
+        document.querySelectorAll('*').forEach(el => {
+          if (el.shadowRoot) {
+            el.shadowRoot.getElementById(STYLE_ID)?.remove();
+          }
+        });
+        // Remove direct styles from html/body
+        document.documentElement.style.removeProperty('font-size');
+        document.body.style.removeProperty('font-size');
+        document.body.style.removeProperty('line-height');
+        sendResponse({ ok: true, message: "Inclusive Mode removed." });
         return true;
       }
       if (msg?.type === "FOCUS_ON") {
-        focusMode();
-        sendResponse({ ok: true, message: "Focus Mode applied." });
+        // First, restore all previously hidden elements
+        document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
+          e.style.removeProperty("display");
+          e.removeAttribute("data-accessflow-hidden");
+        });
+        // Remove old highlights
+        document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
+
+        // Then apply new intensity
+        const intensity = msg.intensity || "medium";
+        focusMode(intensity);
+        sendResponse({ ok: true, message: `Focus Mode applied (${intensity}).` });
+        return true;
+      }
+      if (msg?.type === "FOCUS_OFF") {
+        // Remove hidden elements
+        document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
+          e.style.removeProperty("display");
+          e.removeAttribute("data-accessflow-hidden");
+        });
+        // Remove highlight
+        document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
+        sendResponse({ ok: true, message: "Focus Mode removed." });
         return true;
       }
       if (msg?.type === "TUNNEL_ON") {
         startTunnel();
         sendResponse({ ok: true, message: "Task Tunnel started." });
+        return true;
+      }
+      if (msg?.type === "TUNNEL_OFF") {
+        tunnelState.active = false;
+        document.getElementById(OVERLAY_ID)?.remove();
+        document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
+        sendResponse({ ok: true, message: "Task Tunnel stopped." });
         return true;
       }
       if (msg?.type === "RESET") {

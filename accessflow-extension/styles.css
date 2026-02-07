@@ -64,6 +64,14 @@ h2 {
   gap: 10px;
 }
 
+.mode-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  max-width: 100%;
+}
+
 .row {
   display: flex;
   gap: 8px;
@@ -327,4 +335,120 @@ button:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* ========== Inclusive Mode Controls ========== */
+#inclusive-controls {
+  background: var(--primary-light);
+  border: 1px solid var(--primary-border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease;
+  margin-top: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+#inclusive-controls label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--primary);
+}
+
+#font-size-value {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+#font-size-slider {
+  width: 100%;
+  max-width: 100%;
+  height: 4px;
+  background: #ddd6fe;
+  border-radius: 2px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+#font-size-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--primary);
+  border: 2px solid white;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+}
+
+#font-size-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: var(--shadow-lg);
+}
+
+#font-size-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--primary);
+  border: 2px solid white;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+}
+
+#font-size-slider::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ========== Focus Mode Controls ========== */
+#focus-controls {
+  background: var(--soft);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease;
+  margin-top: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.intensity-selector {
+  display: flex;
+  gap: 6px;
+}
+
+.intensity-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  text-align: center;
+}
+
+.intensity-btn:hover {
+  background: var(--soft);
+  transform: translateY(-1px);
+}
+
+.intensity-btn.active {
+  background: var(--focus);
+  color: white;
+  border-color: var(--focus);
+  font-weight: 600;
 }

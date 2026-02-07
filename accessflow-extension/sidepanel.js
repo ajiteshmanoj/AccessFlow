@@ -1,5 +1,12 @@
 const BACKEND = "http://localhost:8000";
 
+// Mode state tracking
+let inclusiveFontSize = 18; // Default font size
+let isInclusiveModeActive = false;
+let isFocusModeActive = false;
+let isTunnelModeActive = false;
+let focusIntensity = "medium"; // Default: medium intensity
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -74,25 +81,116 @@ async function sendToActiveTab(payload) {
 }
 
 document.getElementById("inclusive").onclick = async () => {
-  const res = await sendToActiveTab({ type: "INCLUSIVE_ON" });
+  if (isInclusiveModeActive) {
+    // Toggle OFF
+    await sendToActiveTab({ type: "INCLUSIVE_OFF" });
+    document.getElementById("inclusive").classList.remove("active");
+    document.getElementById("inclusive-controls").style.display = "none";
+    isInclusiveModeActive = false;
+    log("Inclusive Mode removed.");
+    return;
+  }
+
+  // Toggle ON
+  const res = await sendToActiveTab({ type: "INCLUSIVE_ON", fontSize: inclusiveFontSize });
+  document.getElementById("inclusive").classList.add("active");
+  document.getElementById("inclusive-controls").style.display = "block";
+  isInclusiveModeActive = true;
   log(res?.message || "Inclusive Mode applied.");
 };
 
 document.getElementById("focus").onclick = async () => {
-  const res = await sendToActiveTab({ type: "FOCUS_ON" });
+  if (isFocusModeActive) {
+    // Toggle OFF
+    await sendToActiveTab({ type: "FOCUS_OFF" });
+    document.getElementById("focus").classList.remove("active");
+    document.getElementById("focus-controls").style.display = "none";
+    isFocusModeActive = false;
+    log("Focus Mode removed.");
+    return;
+  }
+
+  // Toggle ON
+  const res = await sendToActiveTab({ type: "FOCUS_ON", intensity: focusIntensity });
+  document.getElementById("focus").classList.add("active");
+  document.getElementById("focus-controls").style.display = "block";
+  isFocusModeActive = true;
   log(res?.message || "Focus Mode applied.");
 };
 
 document.getElementById("tunnel").onclick = async () => {
+  if (isTunnelModeActive) {
+    // Toggle OFF
+    await sendToActiveTab({ type: "TUNNEL_OFF" });
+    document.getElementById("tunnel").classList.remove("active");
+    isTunnelModeActive = false;
+    log("Task Tunnel stopped.");
+    return;
+  }
+
+  // Toggle ON
   const res = await sendToActiveTab({ type: "TUNNEL_ON" });
+  document.getElementById("tunnel").classList.add("active");
+  isTunnelModeActive = true;
   log(res?.message || "Task Tunnel started.");
 };
 
 document.getElementById("reset").onclick = async () => {
   const res = await sendToActiveTab({ type: "RESET" });
+
+  // Reset all mode states
   isSimplifyActive = false;
+  isInclusiveModeActive = false;
+  isFocusModeActive = false;
+  isTunnelModeActive = false;
+
+  // Remove active classes from all buttons
   document.getElementById("simplify").classList.remove("active");
+  document.getElementById("inclusive").classList.remove("active");
+  document.getElementById("focus").classList.remove("active");
+  document.getElementById("tunnel").classList.remove("active");
+
+  // Hide controls
+  document.getElementById("inclusive-controls").style.display = "none";
+  document.getElementById("focus-controls").style.display = "none";
+
   log(res?.message || "Reset.");
+};
+
+document.getElementById("reset-defaults").onclick = async () => {
+  // Reset to default values
+  const defaultFontSize = 18;
+  const defaultIntensity = "medium";
+
+  // Update state
+  inclusiveFontSize = defaultFontSize;
+  focusIntensity = defaultIntensity;
+
+  // Update UI - Font size slider
+  document.getElementById('font-size-slider').value = defaultFontSize;
+  document.getElementById('font-size-value').textContent = defaultFontSize;
+
+  // Update UI - Intensity buttons
+  document.querySelectorAll('.intensity-btn').forEach(btn => {
+    if (btn.dataset.level === defaultIntensity) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  // Save to Chrome storage
+  chrome.storage.sync.set({ inclusiveFontSize: defaultFontSize, focusIntensity: defaultIntensity });
+
+  // Re-apply modes if they're active
+  if (isInclusiveModeActive) {
+    await sendToActiveTab({ type: "INCLUSIVE_ON", fontSize: defaultFontSize });
+  }
+  if (isFocusModeActive) {
+    await sendToActiveTab({ type: "FOCUS_ON", intensity: defaultIntensity });
+  }
+
+  log("Settings reset to defaults (18px font, Medium intensity).");
 };
 
 // ========== INTELLIGENT PAGE SIMPLIFICATION ==========
@@ -1095,6 +1193,70 @@ checkBackendStatus();
 setInterval(checkBackendStatus, 60000);
 
 // ========== END BACKEND STATUS CHECK ==========
+
+// ========== INCLUSIVE MODE FONT SIZE SETTINGS ==========
+// Load saved font size preference on startup
+chrome.storage.sync.get(['inclusiveFontSize'], (result) => {
+  if (result.inclusiveFontSize) {
+    inclusiveFontSize = result.inclusiveFontSize;
+    document.getElementById('font-size-slider').value = inclusiveFontSize;
+    document.getElementById('font-size-value').textContent = inclusiveFontSize;
+  }
+});
+
+// Handle font size slider changes
+document.getElementById('font-size-slider').addEventListener('input', (e) => {
+  inclusiveFontSize = parseInt(e.target.value);
+  document.getElementById('font-size-value').textContent = inclusiveFontSize;
+
+  // Save to Chrome storage
+  chrome.storage.sync.set({ inclusiveFontSize });
+
+  // If Inclusive Mode is active, re-apply with new size
+  if (isInclusiveModeActive) {
+    sendToActiveTab({ type: "INCLUSIVE_ON", fontSize: inclusiveFontSize });
+  }
+});
+// ========== END INCLUSIVE MODE SETTINGS ==========
+
+// ========== FOCUS MODE INTENSITY SETTINGS ==========
+// Load saved focus intensity preference on startup
+chrome.storage.sync.get(['focusIntensity'], (result) => {
+  if (result.focusIntensity) {
+    focusIntensity = result.focusIntensity;
+    // Update UI to show selected intensity
+    document.querySelectorAll('.intensity-btn').forEach(btn => {
+      if (btn.dataset.level === focusIntensity) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+  }
+});
+
+// Handle intensity button clicks
+document.querySelectorAll('.intensity-btn').forEach(btn => {
+  btn.onclick = () => {
+    focusIntensity = btn.dataset.level;
+
+    // Update UI - highlight selected button
+    document.querySelectorAll('.intensity-btn').forEach(b =>
+      b.classList.remove('active')
+    );
+    btn.classList.add('active');
+
+    // Save preference
+    chrome.storage.sync.set({ focusIntensity });
+
+    // If Focus Mode is active, re-apply with new intensity
+    if (isFocusModeActive) {
+      sendToActiveTab({ type: "FOCUS_ON", intensity: focusIntensity });
+      log(`Focus Mode intensity changed to ${focusIntensity}.`);
+    }
+  };
+});
+// ========== END FOCUS MODE SETTINGS ==========
 
 // Initial hint
 log("Tip: Press Ctrl+Shift+V anytime to toggle voice input, or click the mic button.");

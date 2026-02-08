@@ -1304,15 +1304,24 @@
       updateTunnelVoicePreview("");
     };
 
-    try {
-      tunnelVoiceRecognition.start();
-      console.log("[Tunnel Voice] Started listening");
-    } catch (e) {
-      console.warn("[Tunnel Voice] Failed to start:", e);
+    // Acquire mic permission via getUserMedia first to trigger Chrome's prompt
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      stream.getTracks().forEach(t => t.stop());
+      try {
+        tunnelVoiceRecognition.start();
+        console.log("[Tunnel Voice] Started listening");
+      } catch (e) {
+        console.warn("[Tunnel Voice] Failed to start:", e);
+        tunnelVoiceActive = false;
+        tunnelVoiceRecognition = null;
+        updateTunnelMicUI(false);
+      }
+    }).catch((e) => {
+      console.warn("[Tunnel Voice] Mic access denied:", e);
       tunnelVoiceActive = false;
       tunnelVoiceRecognition = null;
       updateTunnelMicUI(false);
-    }
+    });
     }; // end doStart
 
     // If we just killed sidepanel voice, wait for browser to release the mic
@@ -2210,7 +2219,21 @@
       }
     });
 
-    voiceRecognition.start();
+    // Acquire mic permission via getUserMedia first (triggers Chrome's permission prompt),
+    // then start SpeechRecognition. Without this, SpeechRecognition silently fails
+    // with "not-allowed" on sites that haven't been granted mic access.
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      // Stop the stream immediately — we only needed it to trigger the permission prompt.
+      // SpeechRecognition uses its own audio capture internally.
+      stream.getTracks().forEach(t => t.stop());
+      if (portOpen && voiceRecognition) {
+        voiceRecognition.start();
+      }
+    }).catch(() => {
+      if (portOpen) {
+        try { port.postMessage({ type: "VOICE_ERROR", error: "Microphone access denied. Allow mic permission and try again." }); } catch (_) {}
+      }
+    });
   });
   // --- end Voice Input ---
 

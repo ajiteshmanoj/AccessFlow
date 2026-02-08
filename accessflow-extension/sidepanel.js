@@ -582,7 +582,7 @@ document.getElementById("send").onclick = async () => {
 
   // Help command
   if (key === "help" || key === "what can i say" || key === "what can i do") {
-    await respond("You can say: click, highlight, scroll down, scroll up, go back, focus mode, simplify page, read page, describe images, or say an article title to open it.");
+    await respond("You can say: click, highlight, scroll down, scroll up, go back, go to [website], focus mode, simplify page, read page, describe images, or say an article title to open it.");
     return;
   }
 
@@ -635,6 +635,7 @@ document.getElementById("send").onclick = async () => {
     'stop finger tracking': ['stop finger tracking', 'stop tracking', 'stop gestures'],
     'bigger text': ['bigger text', 'increase text', 'larger font', 'make text bigger'],
     'smaller text': ['smaller text', 'decrease text', 'smaller font', 'make text smaller'],
+    'go to website': ['go to', 'open', 'visit', 'navigate to'],
     'help': ['help', 'what can i say', 'commands', 'show commands']
   };
 
@@ -713,7 +714,7 @@ document.getElementById("send").onclick = async () => {
           executed = true;
           break;
         case 'help':
-          message = "You can say: inclusive mode, focus mode, task tunnel, read page, describe images, finger tracking, bigger text, smaller text, or any webpage command like 'click login' or 'search for shoes'";
+          message = "You can say: inclusive mode, focus mode, task tunnel, read page, describe images, finger tracking, bigger text, smaller text, go to [website], or any webpage command like 'click login' or 'search for shoes'";
           executed = true;
           break;
       }
@@ -735,6 +736,59 @@ document.getElementById("send").onclick = async () => {
     }
   }
   // ========== END EXTENSION FEATURE COMMANDS ==========
+
+  // ========== URL NAVIGATION ==========
+  // Check if command is to navigate to a website
+  const urlNavigationPatterns = [
+    /^(?:go to|open|visit|navigate to)\s+(.+)$/i,
+    /^(.+\.(?:com|org|net|edu|gov|io|co|uk|us|ca|au))$/i  // Direct URL like "google.com"
+  ];
+
+  for (const pattern of urlNavigationPatterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      let url = match[1].trim();
+
+      // Handle common shortcuts
+      const shortcuts = {
+        'google': 'google.com',
+        'youtube': 'youtube.com',
+        'github': 'github.com',
+        'reddit': 'reddit.com',
+        'twitter': 'twitter.com',
+        'facebook': 'facebook.com',
+        'amazon': 'amazon.com',
+        'wikipedia': 'wikipedia.org'
+      };
+
+      if (shortcuts[url.toLowerCase()]) {
+        url = shortcuts[url.toLowerCase()];
+      }
+
+      // Add https:// if no protocol specified
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+      }
+
+      try {
+        const tab = await getActiveTab();
+        await chrome.tabs.update(tab.id, { url: url });
+        log(`✓ Navigating to ${url}`);
+        await respond(`Opening ${url}`);
+
+        // Add to conversation history
+        conversationHistory.push({ role: "user", text: cmd });
+        conversationHistory.push({ role: "assistant", text: `Navigating to ${url}` });
+        if (conversationHistory.length > 10) conversationHistory = conversationHistory.slice(-10);
+
+        return; // Don't process further
+      } catch (err) {
+        await respond(`Could not navigate to ${url}: ${err.message}`);
+        return;
+      }
+    }
+  }
+  // ========== END URL NAVIGATION ==========
 
   // Try the built-in command handler first
   const res = await sendToActiveTab({ type: "CMD", cmd });

@@ -1433,6 +1433,73 @@
       return { ok: false, message: "No element found at finger position." };
     }
 
+    // ========== MEDIA PLAYBACK CONTROLS ==========
+    // pause, play, mute, unmute, fullscreen, etc.
+    {
+      const media = document.querySelector("video") || document.querySelector("audio");
+      if (/^(pause|pause video|stop video|stop playing)$/.test(c)) {
+        if (media && !media.paused) { media.pause(); return { ok: true, message: "Paused." }; }
+        // Fallback: try clicking YouTube's play/pause button
+        const btn = document.querySelector(".ytp-play-button, [aria-label*='Pause'], [data-title='Pause']");
+        if (btn) { btn.click(); return { ok: true, message: "Paused." }; }
+        return { ok: false, message: "No media found to pause." };
+      }
+      if (/^(play|play video|resume|resume video|start video)$/.test(c)) {
+        if (media && media.paused) { media.play(); return { ok: true, message: "Playing." }; }
+        const btn = document.querySelector(".ytp-play-button, [aria-label*='Play'], [data-title='Play']");
+        if (btn) { btn.click(); return { ok: true, message: "Playing." }; }
+        return { ok: false, message: "No media found to play." };
+      }
+      if (/^(mute|mute video|mute audio)$/.test(c)) {
+        if (media) { media.muted = true; return { ok: true, message: "Muted." }; }
+        const btn = document.querySelector(".ytp-mute-button, [aria-label*='Mute']");
+        if (btn) { btn.click(); return { ok: true, message: "Muted." }; }
+        return { ok: false, message: "No media found to mute." };
+      }
+      if (/^(unmute|unmute video|unmute audio)$/.test(c)) {
+        if (media) { media.muted = false; return { ok: true, message: "Unmuted." }; }
+        const btn = document.querySelector(".ytp-mute-button, [aria-label*='Unmute']");
+        if (btn) { btn.click(); return { ok: true, message: "Unmuted." }; }
+        return { ok: false, message: "No media found to unmute." };
+      }
+      if (/^(fullscreen|full screen|enter fullscreen)$/.test(c)) {
+        if (media) {
+          try { media.requestFullscreen(); return { ok: true, message: "Entering fullscreen." }; } catch (_) {}
+        }
+        const btn = document.querySelector(".ytp-fullscreen-button, [aria-label*='Full screen'], [aria-label*='Fullscreen']");
+        if (btn) { btn.click(); return { ok: true, message: "Entering fullscreen." }; }
+        return { ok: false, message: "No media found for fullscreen." };
+      }
+      if (/^(exit fullscreen|leave fullscreen|escape fullscreen)$/.test(c)) {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+          return { ok: true, message: "Exited fullscreen." };
+        }
+        return { ok: false, message: "Not in fullscreen." };
+      }
+      // Volume control
+      const volUp = c.match(/^(volume up|louder|increase volume)$/);
+      if (volUp && media) {
+        media.volume = Math.min(1, media.volume + 0.2);
+        return { ok: true, message: `Volume: ${Math.round(media.volume * 100)}%` };
+      }
+      const volDown = c.match(/^(volume down|quieter|decrease volume|softer)$/);
+      if (volDown && media) {
+        media.volume = Math.max(0, media.volume - 0.2);
+        return { ok: true, message: `Volume: ${Math.round(media.volume * 100)}%` };
+      }
+      // Skip forward/backward
+      if (/^(skip|skip forward|fast forward|skip ahead)$/.test(c) && media) {
+        media.currentTime += 10;
+        return { ok: true, message: "Skipped forward 10 seconds." };
+      }
+      if (/^(rewind|skip back|go back 10|skip backward)$/.test(c) && media) {
+        media.currentTime -= 10;
+        return { ok: true, message: "Rewound 10 seconds." };
+      }
+    }
+    // ========== END MEDIA PLAYBACK CONTROLS ==========
+
     // Simple patterns:
     // "highlight search", "click login", "type email john@x.com"
     const mHighlight = c.match(/^highlight\s+(.+)$/);

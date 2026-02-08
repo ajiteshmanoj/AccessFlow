@@ -876,105 +876,14 @@
       return rect.width > 0 && rect.height > 0;
     });
 
-    // Merge both lists and remove duplicates (use Set to deduplicate)
+    // Merge both lists and remove duplicates
     const allInputs = [...new Set([...standardInputs, ...customOptions])];
 
-    // Group radio buttons by name attribute (each group = 1 field)
-    const radioGroups = new Map();
-    const checkboxGroups = new Map();
-    const customOptionGroups = new Map();
-    const otherInputs = [];
+    // Each element is its own step — no grouping, so users can navigate individually
+    const finalInputs = [...allInputs];
 
-    for (const input of allInputs) {
-      const type = (input.type || "").toLowerCase();
-      const role = input.getAttribute('role');
-
-      // Handle standard radio inputs
-      if (type === "radio" || role === "radio") {
-        const groupName = input.name || input.getAttribute('data-group') || `radio_${Math.random()}`;
-        if (!radioGroups.has(groupName)) {
-          radioGroups.set(groupName, []);
-        }
-        radioGroups.get(groupName).push(input);
-      }
-      // Handle standard checkbox inputs
-      else if (type === "checkbox" || role === "checkbox") {
-        const groupName = input.name || input.getAttribute('data-group') || `checkbox_${input.id || Math.random()}`;
-        // Group checkboxes with same name together
-        if (input.name || input.getAttribute('data-group')) {
-          if (!checkboxGroups.has(groupName)) {
-            checkboxGroups.set(groupName, []);
-          }
-          checkboxGroups.get(groupName).push(input);
-        } else {
-          // Standalone checkbox (no group)
-          otherInputs.push(input);
-        }
-      }
-      // Handle custom option groups (buttons/divs with data-group or common parent)
-      else if (role === "option" || input.hasAttribute('data-option') || input.hasAttribute('data-answer')) {
-        // Try to group by data-group attribute or common parent
-        const groupName = input.getAttribute('data-group') || input.getAttribute('data-question') || '';
-        if (groupName) {
-          if (!customOptionGroups.has(groupName)) {
-            customOptionGroups.set(groupName, []);
-          }
-          customOptionGroups.get(groupName).push(input);
-        } else {
-          // Try to group by common parent container
-          const container = input.closest('[role="radiogroup"], [role="group"], .options-container, .answer-choices, .quiz-options');
-          if (container) {
-            const containerKey = `custom_group_${Array.from(document.querySelectorAll('*')).indexOf(container)}`;
-            if (!customOptionGroups.has(containerKey)) {
-              customOptionGroups.set(containerKey, []);
-            }
-            customOptionGroups.get(containerKey).push(input);
-          } else {
-            otherInputs.push(input);
-          }
-        }
-      }
-      // Everything else (text inputs, textareas, selects)
-      else {
-        otherInputs.push(input);
-      }
-    }
-
-    // Build final list: add each option individually (not grouped)
-    const finalInputs = [];
-
-    // Add each radio button as a separate step
-    for (const [name, radios] of radioGroups) {
-      radios.forEach(radio => {
-        finalInputs.push(radio);
-      });
-    }
-
-    // Add each checkbox as a separate step
-    for (const [name, checkboxes] of checkboxGroups) {
-      checkboxes.forEach(checkbox => {
-        finalInputs.push(checkbox);
-      });
-    }
-
-    // Add each custom option as a separate step
-    for (const [name, options] of customOptionGroups) {
-      options.forEach(option => {
-        finalInputs.push(option);
-      });
-    }
-
-    // Add all other inputs (text, textarea, select, standalone checkboxes)
-    finalInputs.push(...otherInputs);
-
-    // Sort by DOM order (top to bottom) - cache positions to avoid layout thrashing
-    const positions = new Map();
-    for (const item of finalInputs) {
-      const el = item._primary || item;
-      positions.set(item, el.getBoundingClientRect().top);
-    }
-
-    finalInputs.sort((a, b) => positions.get(a) - positions.get(b));
+    // Sort by DOM order (top to bottom)
+    finalInputs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
 
     return finalInputs;
   }
@@ -987,16 +896,8 @@
     if (currentItem) {
       let foundIdx = -1;
 
-      // Check if current item still exists
-      if (currentItem._isGroup) {
-        // For groups, match by name and type
-        foundIdx = newInputs.findIndex(item =>
-          item._isGroup && item._type === currentItem._type && item._name === currentItem._name
-        );
-      } else {
-        // For regular inputs, match by element reference
-        foundIdx = newInputs.indexOf(currentItem);
-      }
+      // Match by element reference
+      foundIdx = newInputs.indexOf(currentItem);
 
       if (foundIdx >= 0) {
         tunnelState.idx = foundIdx;
@@ -1164,7 +1065,6 @@
     } else if (associatedLabel) {
       container = associatedLabel;
     } else if (optionContainer && optionContainer !== document.body && optionContainer.offsetHeight < window.innerHeight * 0.8) {
-      // Only use option container if it's not too large (to avoid highlighting entire page)
       container = optionContainer;
     } else {
       container = item;

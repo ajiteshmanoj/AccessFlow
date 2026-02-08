@@ -4,6 +4,9 @@
   const STYLE_ID = "accessflow-styles";
   const HILITE_CLASS = "accessflow-highlight";
   const OVERLAY_ID = "accessflow-overlay";
+  const DYSLEXIA_STYLE_ID = "accessflow-dyslexia";
+  const DYSLEXIA_RULER_ID = "accessflow-dyslexia-ruler";
+  const DYSLEXIA_OVERLAY_ID = "accessflow-dyslexia-overlay";
 
   function setStyle(cssText) {
     let el = document.getElementById(STYLE_ID);
@@ -102,6 +105,9 @@
     tunnelState.active = false;
     stopTunnelVoice();
 
+    // Clean up Dyslexia Mode
+    cleanupDyslexiaMode();
+
     // Additional cleanup for other modes
     setTimeout(() => {
       document.getElementById(OVERLAY_ID)?.remove();
@@ -134,6 +140,10 @@
   let inclusiveModeObserver = null;
   let inclusiveModeInterval = null;
   let currentInclusiveFontSize = 18;
+
+  // ========== DYSLEXIA MODE STATE ==========
+  let dyslexiaModeObserver = null;
+  let dyslexiaRulerListener = null;
 
   // ========== FOCUS MODE OBSERVER ==========
   let focusModeObserver = null;
@@ -2208,6 +2218,229 @@
   }
   // ========== END FINGER TRACKING CURSOR ==========
 
+  // ========== DYSLEXIA MODE ==========
+  function applyDyslexiaMode(features, overlayColor) {
+    // Clean up previous application first
+    cleanupDyslexiaMode();
+
+    let css = "";
+
+    // --- Font: OpenDyslexic ---
+    if (features.font) {
+      const regularUrl = chrome.runtime.getURL("fonts/OpenDyslexic-Regular.woff2");
+      const boldUrl = chrome.runtime.getURL("fonts/OpenDyslexic-Bold.woff2");
+      css += `
+        @font-face {
+          font-family: 'OpenDyslexic';
+          src: url('${regularUrl}') format('woff2');
+          font-weight: normal;
+          font-style: normal;
+          font-display: swap;
+        }
+        @font-face {
+          font-family: 'OpenDyslexic';
+          src: url('${boldUrl}') format('woff2');
+          font-weight: bold;
+          font-style: normal;
+          font-display: swap;
+        }
+        body, body *, p, span, div, a, li, td, th, h1, h2, h3, h4, h5, h6,
+        label, input, textarea, select, button, article, section, main, aside, nav, header, footer {
+          font-family: 'OpenDyslexic', sans-serif !important;
+          word-spacing: 0.16em !important;
+          letter-spacing: 0.12em !important;
+          line-height: 1.8 !important;
+        }
+      `;
+    }
+
+    // --- Bionic Reading style ---
+    if (features.bionic) {
+      css += `
+        b.af-bionic {
+          font-weight: 700 !important;
+        }
+      `;
+    }
+
+    // Inject style element
+    if (css) {
+      const style = document.createElement("style");
+      style.id = DYSLEXIA_STYLE_ID;
+      style.textContent = css;
+      document.head.appendChild(style);
+    }
+
+    // --- Reading Ruler ---
+    if (features.ruler) {
+      const ruler = document.createElement("div");
+      ruler.id = DYSLEXIA_RULER_ID;
+      ruler.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 40px;
+        background: rgba(255, 255, 0, 0.15);
+        pointer-events: none;
+        z-index: 2147483645;
+        transition: transform 0.05s linear;
+        transform: translateY(0px);
+      `;
+      document.body.appendChild(ruler);
+
+      dyslexiaRulerListener = (e) => {
+        ruler.style.transform = `translateY(${e.clientY - 20}px)`;
+      };
+      document.addEventListener("mousemove", dyslexiaRulerListener);
+    }
+
+    // --- Colored Overlay ---
+    if (features.overlay) {
+      const colors = {
+        yellow: "rgba(255, 255, 0, 0.12)",
+        blue: "rgba(0, 100, 255, 0.10)",
+        pink: "rgba(255, 0, 128, 0.08)",
+        green: "rgba(0, 200, 100, 0.10)"
+      };
+      const overlay = document.createElement("div");
+      overlay.id = DYSLEXIA_OVERLAY_ID;
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: ${colors[overlayColor] || colors.yellow};
+        pointer-events: none;
+        z-index: 2147483646;
+      `;
+      document.body.appendChild(overlay);
+    }
+
+    // --- Bionic Reading (text processing) ---
+    if (features.bionic) {
+      applyBionicReading();
+
+      // Observe for new content
+      dyslexiaModeObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === Node.ELEMENT_NODE && !node.closest('#' + DYSLEXIA_RULER_ID) && !node.closest('#' + DYSLEXIA_OVERLAY_ID)) {
+              applyBionicToNode(node);
+            }
+          }
+        }
+      });
+      dyslexiaModeObserver.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  function applyBionicReading() {
+    applyBionicToNode(document.body);
+  }
+
+  function applyBionicToNode(root) {
+    const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "CODE", "PRE", "TEXTAREA", "INPUT", "SVG"]);
+
+    const walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          // Skip if inside AccessFlow-injected elements
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest(`#${DYSLEXIA_STYLE_ID}, #${DYSLEXIA_RULER_ID}, #${DYSLEXIA_OVERLAY_ID}, #${OVERLAY_ID}, #${STYLE_ID}`)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+          // Skip if already bionic-processed
+          if (parent.classList && parent.classList.contains("af-bionic")) return NodeFilter.FILTER_REJECT;
+          if (parent.hasAttribute && parent.hasAttribute("data-af-bionic-processed")) return NodeFilter.FILTER_REJECT;
+          // Only process nodes with actual word content
+          if (!node.textContent.trim()) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    const textNodes = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode);
+    }
+
+    for (const textNode of textNodes) {
+      const text = textNode.textContent;
+      if (!text.trim()) continue;
+
+      const parent = textNode.parentElement;
+      if (!parent) continue;
+
+      // Split into words and whitespace
+      const parts = text.split(/(\s+)/);
+      if (parts.length <= 1 && !text.trim()) continue;
+
+      const fragment = document.createDocumentFragment();
+      for (const part of parts) {
+        if (/^\s+$/.test(part) || !part) {
+          fragment.appendChild(document.createTextNode(part));
+          continue;
+        }
+        // Bold the first half of the word
+        const boldLen = Math.ceil(part.length / 2);
+        const boldPart = part.slice(0, boldLen);
+        const restPart = part.slice(boldLen);
+
+        const b = document.createElement("b");
+        b.className = "af-bionic";
+        b.textContent = boldPart;
+        fragment.appendChild(b);
+        if (restPart) {
+          fragment.appendChild(document.createTextNode(restPart));
+        }
+      }
+
+      parent.setAttribute("data-af-bionic-processed", "1");
+      parent.replaceChild(fragment, textNode);
+    }
+  }
+
+  function cleanupDyslexiaMode() {
+    // Remove style element
+    document.getElementById(DYSLEXIA_STYLE_ID)?.remove();
+
+    // Remove ruler and its listener
+    const ruler = document.getElementById(DYSLEXIA_RULER_ID);
+    if (ruler) ruler.remove();
+    if (dyslexiaRulerListener) {
+      document.removeEventListener("mousemove", dyslexiaRulerListener);
+      dyslexiaRulerListener = null;
+    }
+
+    // Remove overlay
+    document.getElementById(DYSLEXIA_OVERLAY_ID)?.remove();
+
+    // Disconnect MutationObserver
+    if (dyslexiaModeObserver) {
+      dyslexiaModeObserver.disconnect();
+      dyslexiaModeObserver = null;
+    }
+
+    // Unwrap bionic bold elements
+    document.querySelectorAll("b.af-bionic").forEach(b => {
+      const textNode = document.createTextNode(b.textContent);
+      b.parentNode.replaceChild(textNode, b);
+    });
+
+    // Remove bionic-processed markers and normalize text nodes
+    document.querySelectorAll("[data-af-bionic-processed]").forEach(el => {
+      el.removeAttribute("data-af-bionic-processed");
+      el.normalize(); // Merge adjacent text nodes
+    });
+  }
+  // ========== END DYSLEXIA MODE ==========
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg?.type === "PING") {
@@ -2375,6 +2608,17 @@
         document.getElementById("accessflow-colorblind")?.remove();
         document.documentElement.style.removeProperty("filter");
         sendResponse({ ok: true, message: "Color blind filter removed." });
+        return true;
+      }
+      // ========== DYSLEXIA MODE HANDLERS ==========
+      if (msg?.type === "DYSLEXIA_ON") {
+        applyDyslexiaMode(msg.features, msg.overlayColor);
+        sendResponse({ ok: true, message: "Dyslexia Mode applied." });
+        return true;
+      }
+      if (msg?.type === "DYSLEXIA_OFF") {
+        cleanupDyslexiaMode();
+        sendResponse({ ok: true, message: "Dyslexia Mode removed." });
         return true;
       }
       // ========== SIMPLIFY MESSAGE HANDLERS ==========

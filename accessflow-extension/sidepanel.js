@@ -9,6 +9,9 @@ let focusIntensity = "medium"; // Default: medium intensity
 let isColorBlindActive = false;
 let colorBlindFilter = "deuteranopia";
 let colorBlindMode = "correct";
+let isDyslexiaModeActive = false;
+let dyslexiaFeatures = { font: true, ruler: false, overlay: false, bionic: false };
+let dyslexiaOverlayColor = "yellow";
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -89,6 +92,7 @@ const PROFILE_DEFAULTS = {
   focusMode: false,
   simplifyPage: false,
   colorBlindActive: false,
+  dyslexiaMode: false,
   autoListen: false,
   autoReadPage: false
 };
@@ -125,6 +129,9 @@ async function applyProfile(profile) {
   if (profile.colorBlindActive) {
     document.getElementById("colorblind").click();
   }
+  if (profile.dyslexiaMode) {
+    document.getElementById("dyslexia").click();
+  }
   if (profile.autoListen) {
     await startListening();
   }
@@ -145,7 +152,7 @@ function updateProfileUI(profile) {
   // Update status pill
   const statusEl = document.getElementById("profile-status");
   const hasSavedPrefs = profile.inclusiveMode || profile.focusMode ||
-    profile.simplifyPage || profile.colorBlindActive || profile.autoListen || profile.autoReadPage;
+    profile.simplifyPage || profile.colorBlindActive || profile.dyslexiaMode || profile.autoListen || profile.autoReadPage;
 
   if (statusEl) {
     if (hasSavedPrefs) {
@@ -165,7 +172,8 @@ function updateProfileUI(profile) {
       { key: "inclusiveMode", label: "Inclusive Mode will auto-apply" },
       { key: "focusMode", label: "Focus Mode will auto-apply" },
       { key: "simplifyPage", label: "Simplify Page will auto-apply" },
-      { key: "colorBlindActive", label: "Color Blind Filter will auto-apply" }
+      { key: "colorBlindActive", label: "Color Blind Filter will auto-apply" },
+      { key: "dyslexiaMode", label: "Dyslexia Mode will auto-apply" }
     ];
     for (const mode of modes) {
       if (profile[mode.key]) {
@@ -269,6 +277,84 @@ document.getElementById("colorblind").onclick = async () => {
   saveProfile({ colorBlindActive: true });
 };
 
+document.getElementById("dyslexia").onclick = async () => {
+  if (isDyslexiaModeActive) {
+    // Toggle OFF
+    await sendToActiveTab({ type: "DYSLEXIA_OFF" });
+    document.getElementById("dyslexia").classList.remove("active");
+    document.getElementById("dyslexia-controls").style.display = "none";
+    isDyslexiaModeActive = false;
+    log("Dyslexia Mode removed.");
+    saveProfile({ dyslexiaMode: false });
+    return;
+  }
+
+  // Toggle ON
+  const res = await sendToActiveTab({
+    type: "DYSLEXIA_ON",
+    features: dyslexiaFeatures,
+    overlayColor: dyslexiaOverlayColor
+  });
+  document.getElementById("dyslexia").classList.add("active");
+  document.getElementById("dyslexia-controls").style.display = "block";
+  isDyslexiaModeActive = true;
+  log(res?.message || "Dyslexia Mode applied.");
+  saveProfile({ dyslexiaMode: true });
+};
+
+// Dyslexia feature toggle handlers (multi-select)
+document.querySelectorAll('.dyslexia-feat-btn').forEach(btn => {
+  btn.onclick = () => {
+    const feature = btn.dataset.feature;
+    // Toggle active class (multi-select)
+    btn.classList.toggle('active');
+    dyslexiaFeatures[feature] = btn.classList.contains('active');
+
+    // Show/hide overlay color picker when overlay is toggled
+    const overlayColors = document.getElementById('dyslexia-overlay-colors');
+    if (feature === 'overlay') {
+      overlayColors.style.display = dyslexiaFeatures.overlay ? 'flex' : 'none';
+    }
+
+    // Save to storage
+    chrome.storage.sync.set({ dyslexiaFeatures });
+
+    // If mode is active, re-apply with updated features
+    if (isDyslexiaModeActive) {
+      sendToActiveTab({
+        type: "DYSLEXIA_ON",
+        features: dyslexiaFeatures,
+        overlayColor: dyslexiaOverlayColor
+      });
+    }
+  };
+});
+
+// Dyslexia overlay color handlers (single-select)
+document.querySelectorAll('.dyslexia-color-btn').forEach(btn => {
+  btn.onclick = () => {
+    dyslexiaOverlayColor = btn.dataset.color;
+
+    // Update UI - highlight selected button (single-select)
+    document.querySelectorAll('.dyslexia-color-btn').forEach(b =>
+      b.classList.remove('active')
+    );
+    btn.classList.add('active');
+
+    // Save preference
+    chrome.storage.sync.set({ dyslexiaOverlayColor });
+
+    // If mode is active, re-apply with new color
+    if (isDyslexiaModeActive) {
+      sendToActiveTab({
+        type: "DYSLEXIA_ON",
+        features: dyslexiaFeatures,
+        overlayColor: dyslexiaOverlayColor
+      });
+    }
+  };
+});
+
 document.getElementById("reset").onclick = async () => {
   const res = await sendToActiveTab({ type: "RESET" });
 
@@ -278,6 +364,7 @@ document.getElementById("reset").onclick = async () => {
   isFocusModeActive = false;
   isTunnelModeActive = false;
   isColorBlindActive = false;
+  isDyslexiaModeActive = false;
 
   // Remove active classes from all buttons
   document.getElementById("simplify").classList.remove("active");
@@ -285,15 +372,17 @@ document.getElementById("reset").onclick = async () => {
   document.getElementById("focus").classList.remove("active");
   document.getElementById("tunnel").classList.remove("active");
   document.getElementById("colorblind").classList.remove("active");
+  document.getElementById("dyslexia").classList.remove("active");
 
   // Hide controls
   document.getElementById("inclusive-controls").style.display = "none";
   document.getElementById("focus-controls").style.display = "none";
   document.getElementById("colorblind-controls").style.display = "none";
+  document.getElementById("dyslexia-controls").style.display = "none";
 
   log(res?.message || "Reset.");
   // Clear mode preferences but preserve autoListen and autoReadPage
-  saveProfile({ inclusiveMode: false, focusMode: false, simplifyPage: false, colorBlindActive: false });
+  saveProfile({ inclusiveMode: false, focusMode: false, simplifyPage: false, colorBlindActive: false, dyslexiaMode: false });
 };
 
 document.getElementById("reset-defaults").onclick = async () => {
@@ -328,12 +417,25 @@ document.getElementById("reset-defaults").onclick = async () => {
     btn.classList.toggle('active', btn.dataset.mode === "correct");
   });
 
+  // Reset dyslexia to defaults
+  dyslexiaFeatures = { font: true, ruler: false, overlay: false, bionic: false };
+  dyslexiaOverlayColor = "yellow";
+  document.querySelectorAll('.dyslexia-feat-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.feature === 'font');
+  });
+  document.querySelectorAll('.dyslexia-color-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.color === 'yellow');
+  });
+  document.getElementById('dyslexia-overlay-colors').style.display = 'none';
+
   // Save to Chrome storage
   chrome.storage.sync.set({
     inclusiveFontSize: defaultFontSize,
     focusIntensity: defaultIntensity,
     colorBlindFilter: "deuteranopia",
-    colorBlindMode: "correct"
+    colorBlindMode: "correct",
+    dyslexiaFeatures: { font: true, ruler: false, overlay: false, bionic: false },
+    dyslexiaOverlayColor: "yellow"
   });
 
   // Re-apply modes if they're active
@@ -345,6 +447,9 @@ document.getElementById("reset-defaults").onclick = async () => {
   }
   if (isColorBlindActive) {
     await sendToActiveTab({ type: "COLORBLIND_ON", filter: colorBlindFilter, mode: colorBlindMode });
+  }
+  if (isDyslexiaModeActive) {
+    await sendToActiveTab({ type: "DYSLEXIA_ON", features: dyslexiaFeatures, overlayColor: dyslexiaOverlayColor });
   }
 
   log("Settings reset to defaults (18px font, Medium intensity, Deuteranopia Correct).");
@@ -433,6 +538,9 @@ const PANEL_COMMANDS = {
   "color blind":     "colorblind",
   "color filter":    "colorblind",
   "colorblind":      "colorblind",
+  "dyslexia mode":   "dyslexia",
+  "dyslexia":        "dyslexia",
+  "reading mode":    "dyslexia",
   "describe images": "describe-images",
   "describe":        "describe-images",
   "read page":       "narrate-page",
@@ -1628,6 +1736,28 @@ document.querySelectorAll('.cb-mode-btn').forEach(btn => {
 });
 // ========== END COLOR BLIND FILTER SETTINGS ==========
 
+// ========== DYSLEXIA MODE SETTINGS ==========
+// Load saved dyslexia preferences on startup
+chrome.storage.sync.get(['dyslexiaFeatures', 'dyslexiaOverlayColor'], (result) => {
+  if (result.dyslexiaFeatures) {
+    dyslexiaFeatures = result.dyslexiaFeatures;
+    document.querySelectorAll('.dyslexia-feat-btn').forEach(btn => {
+      btn.classList.toggle('active', !!dyslexiaFeatures[btn.dataset.feature]);
+    });
+    // Show overlay colors if overlay is active
+    if (dyslexiaFeatures.overlay) {
+      document.getElementById('dyslexia-overlay-colors').style.display = 'flex';
+    }
+  }
+  if (result.dyslexiaOverlayColor) {
+    dyslexiaOverlayColor = result.dyslexiaOverlayColor;
+    document.querySelectorAll('.dyslexia-color-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.color === dyslexiaOverlayColor);
+    });
+  }
+});
+// ========== END DYSLEXIA MODE SETTINGS ==========
+
 // ========== AUTO-SUGGEST MODE ON PAGE LOAD ==========
 async function analyzeAndSuggest() {
   try {
@@ -1694,7 +1824,7 @@ document.getElementById("clear-profile").onclick = () => {
   updateProfileUI(profile);
 
   const hasModes = profile.inclusiveMode || profile.focusMode ||
-    profile.simplifyPage || profile.autoListen || profile.autoReadPage;
+    profile.simplifyPage || profile.dyslexiaMode || profile.autoListen || profile.autoReadPage;
   if (hasModes) {
     log("Restoring your saved preferences...");
     await applyProfile(profile);

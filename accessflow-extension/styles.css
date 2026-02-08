@@ -682,6 +682,85 @@ input:focus-visible {
   font-weight: 600;
 }
 
+/* ========== Dyslexia Mode Controls ========== */
+#dyslexia-controls {
+  background: var(--soft);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease;
+  margin-top: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.dyslexia-feature-selector {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dyslexia-feat-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  text-align: center;
+  min-width: 50px;
+}
+
+.dyslexia-feat-btn:hover {
+  background: var(--soft);
+  transform: translateY(-1px);
+}
+
+.dyslexia-feat-btn.active {
+  background: var(--focus);
+  color: white;
+  border-color: var(--focus);
+  font-weight: 600;
+}
+
+#dyslexia-overlay-colors {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dyslexia-color-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  text-align: center;
+  min-width: 40px;
+}
+
+.dyslexia-color-btn:hover {
+  transform: translateY(-1px);
+}
+
+.dyslexia-color-btn[data-color="yellow"] { border-color: #fbbf24; }
+.dyslexia-color-btn[data-color="blue"] { border-color: #60a5fa; }
+.dyslexia-color-btn[data-color="pink"] { border-color: #f472b6; }
+.dyslexia-color-btn[data-color="green"] { border-color: #34d399; }
+
+.dyslexia-color-btn[data-color="yellow"].active { background: #fef3c7; color: #92400e; border-color: #f59e0b; font-weight: 600; }
+.dyslexia-color-btn[data-color="blue"].active { background: #dbeafe; color: #1e40af; border-color: #3b82f6; font-weight: 600; }
+.dyslexia-color-btn[data-color="pink"].active { background: #fce7f3; color: #9d174d; border-color: #ec4899; font-weight: 600; }
+.dyslexia-color-btn[data-color="green"].active { background: #d1fae5; color: #065f46; border-color: #10b981; font-weight: 600; }
+
 /* ========== UI Cleanup: Sections ========== */
 .section {
   background: white;

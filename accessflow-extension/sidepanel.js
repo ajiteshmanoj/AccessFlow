@@ -1546,49 +1546,27 @@ function handleVoiceMessage(msg) {
   }
 }
 
-// --- Sidepanel-local voice recognition (for restricted URLs like chrome://newtab) ---
-let localVoiceRecognition = null;
+// --- Offscreen-document voice recognition (for restricted URLs like chrome://newtab) ---
 let isLocalVoiceMode = false;
 
-function startLocalVoice() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    log("Speech recognition not supported in this browser.");
-    return false;
-  }
+async function ensureOffscreenDocument() {
+  // Check if we already have an offscreen document
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"]
+  });
+  if (contexts.length > 0) return;
 
-  localVoiceRecognition = new SpeechRecognition();
-  localVoiceRecognition.continuous = true;
-  localVoiceRecognition.interimResults = true;
-  localVoiceRecognition.lang = "en-US";
+  await chrome.offscreen.createDocument({
+    url: "offscreen.html",
+    reasons: ["USER_MEDIA"],
+    justification: "Speech recognition for voice commands on restricted pages"
+  });
+}
 
-  localVoiceRecognition.onresult = (event) => {
-    let transcript = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript;
-    }
-    const isFinal = event.results[event.results.length - 1].isFinal;
-    handleVoiceMessage({ type: "VOICE_RESULT", transcript, isFinal });
-  };
-
-  localVoiceRecognition.onerror = (event) => {
-    if (event.error === "not-allowed") {
-      log("Microphone access denied. Allow mic in browser settings.");
-      stopListening();
-    } else if (event.error !== "no-speech" && event.error !== "aborted") {
-      handleVoiceMessage({ type: "VOICE_ERROR", error: event.error });
-    }
-  };
-
-  localVoiceRecognition.onend = () => {
-    // Auto-restart if still supposed to be listening
-    if (isListening && isLocalVoiceMode) {
-      try { localVoiceRecognition.start(); } catch (_) {}
-    }
-  };
-
+async function startLocalVoice() {
   try {
-    localVoiceRecognition.start();
+    await ensureOffscreenDocument();
+    await chrome.runtime.sendMessage({ target: "offscreen-voice", type: "START_VOICE" });
     return true;
   } catch (e) {
     log("Could not start voice: " + e.message);
@@ -1597,12 +1575,22 @@ function startLocalVoice() {
 }
 
 function stopLocalVoice() {
-  if (localVoiceRecognition) {
-    try { localVoiceRecognition.abort(); } catch (_) {}
-    localVoiceRecognition = null;
+  if (isLocalVoiceMode) {
+    chrome.runtime.sendMessage({ target: "offscreen-voice", type: "STOP_VOICE" }).catch(() => {});
   }
   isLocalVoiceMode = false;
 }
+
+// Listen for voice results from the offscreen document
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "OFFSCREEN_VOICE_RESULT") {
+    handleVoiceMessage({ type: "VOICE_RESULT", transcript: msg.transcript, isFinal: msg.isFinal });
+  }
+  if (msg.type === "OFFSCREEN_VOICE_ERROR") {
+    log("Speech error: " + msg.error);
+    stopListening();
+  }
+});
 
 async function startListening() {
   if (isListening) return;
@@ -1611,8 +1599,8 @@ async function startListening() {
   const restricted = !tab?.id || isRestrictedUrl(tab.url || "");
 
   if (restricted) {
-    // Use sidepanel-local Speech Recognition (no content script needed)
-    if (!startLocalVoice()) return;
+    // Use offscreen document for Speech Recognition (no content script needed)
+    if (!(await startLocalVoice())) return;
     isLocalVoiceMode = true;
     isListening = true;
     micBtn.classList.add("listening");

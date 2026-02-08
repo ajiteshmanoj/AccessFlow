@@ -88,6 +88,7 @@ const PROFILE_DEFAULTS = {
   inclusiveMode: false,
   focusMode: false,
   simplifyPage: false,
+  colorBlindActive: false,
   autoListen: false,
   autoReadPage: false
 };
@@ -121,6 +122,9 @@ async function applyProfile(profile) {
   if (profile.simplifyPage) {
     document.getElementById("simplify").click();
   }
+  if (profile.colorBlindActive) {
+    document.getElementById("colorblind").click();
+  }
   if (profile.autoListen) {
     await startListening();
   }
@@ -141,7 +145,7 @@ function updateProfileUI(profile) {
   // Update status pill
   const statusEl = document.getElementById("profile-status");
   const hasSavedPrefs = profile.inclusiveMode || profile.focusMode ||
-    profile.simplifyPage || profile.autoListen || profile.autoReadPage;
+    profile.simplifyPage || profile.colorBlindActive || profile.autoListen || profile.autoReadPage;
 
   if (statusEl) {
     if (hasSavedPrefs) {
@@ -160,7 +164,8 @@ function updateProfileUI(profile) {
     const modes = [
       { key: "inclusiveMode", label: "Inclusive Mode will auto-apply" },
       { key: "focusMode", label: "Focus Mode will auto-apply" },
-      { key: "simplifyPage", label: "Simplify Page will auto-apply" }
+      { key: "simplifyPage", label: "Simplify Page will auto-apply" },
+      { key: "colorBlindActive", label: "Color Blind Filter will auto-apply" }
     ];
     for (const mode of modes) {
       if (profile[mode.key]) {
@@ -192,6 +197,7 @@ document.getElementById("inclusive").onclick = async () => {
     document.getElementById("inclusive-controls").style.display = "none";
     isInclusiveModeActive = false;
     log("Inclusive Mode removed.");
+    saveProfile({ inclusiveMode: false });
     return;
   }
 
@@ -212,6 +218,7 @@ document.getElementById("focus").onclick = async () => {
     document.getElementById("focus-controls").style.display = "none";
     isFocusModeActive = false;
     log("Focus Mode removed.");
+    saveProfile({ focusMode: false });
     return;
   }
 
@@ -249,6 +256,7 @@ document.getElementById("colorblind").onclick = async () => {
     document.getElementById("colorblind-controls").style.display = "none";
     isColorBlindActive = false;
     log("Color blind filter removed.");
+    saveProfile({ colorBlindActive: false });
     return;
   }
 
@@ -258,6 +266,7 @@ document.getElementById("colorblind").onclick = async () => {
   document.getElementById("colorblind-controls").style.display = "block";
   isColorBlindActive = true;
   log(res?.message || "Color blind filter applied.");
+  saveProfile({ colorBlindActive: true });
 };
 
 document.getElementById("reset").onclick = async () => {
@@ -284,7 +293,7 @@ document.getElementById("reset").onclick = async () => {
 
   log(res?.message || "Reset.");
   // Clear mode preferences but preserve autoListen and autoReadPage
-  saveProfile({ inclusiveMode: false, focusMode: false, simplifyPage: false });
+  saveProfile({ inclusiveMode: false, focusMode: false, simplifyPage: false, colorBlindActive: false });
 };
 
 document.getElementById("reset-defaults").onclick = async () => {
@@ -1698,3 +1707,17 @@ document.getElementById("clear-profile").onclick = () => {
 
 // Initial hint
 log("Tip: Press Ctrl+Shift+V anytime to toggle voice input, or click the mic button.");
+
+// ========== CLEANUP ON SIDEPANEL CLOSE ==========
+// Reset page modifications when sidepanel is closed
+window.addEventListener('beforeunload', async () => {
+  // Only reset if user hasn't saved modes in their profile
+  const profile = await loadProfile();
+  const hasSavedModes = profile.inclusiveMode || profile.focusMode || profile.simplifyPage;
+
+  if (!hasSavedModes) {
+    // User hasn't saved preferences, so reset the page
+    await sendToActiveTab({ type: "RESET" });
+  }
+});
+

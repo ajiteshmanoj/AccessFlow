@@ -185,8 +185,28 @@
       /* Reduce motion */
       *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 
-      /* Highlight class - subtle and less intrusive */
-      .${HILITE_CLASS} { outline: 2px solid #f59e0b !important; outline-offset: 1px !important; }
+      /* Highlight class - VERY prominent and impossible to miss */
+      .${HILITE_CLASS} {
+        outline: 5px solid #f59e0b !important;
+        outline-offset: 3px !important;
+        background-color: rgba(251, 191, 36, 0.25) !important;
+        box-shadow: 0 0 0 6px rgba(251, 191, 36, 0.3), 0 0 30px rgba(251, 191, 36, 0.5) !important;
+        border-radius: 8px !important;
+        position: relative !important;
+        z-index: 1000 !important;
+        transition: all 0.2s ease !important;
+      }
+
+      /* Ensure the highlight is visible even on elements with backgrounds */
+      .${HILITE_CLASS}::before {
+        content: '' !important;
+        position: absolute !important;
+        inset: -3px !important;
+        border: 3px solid #f59e0b !important;
+        border-radius: 8px !important;
+        pointer-events: none !important;
+        z-index: 1 !important;
+      }
     `;
   }
 
@@ -834,28 +854,54 @@
   let tunnelObserver = null;
 
   function collectTunnelInputs() {
-    const allInputs = Array.from(document.querySelectorAll("input, select, textarea"))
+    // Collect standard form inputs
+    const standardInputs = Array.from(document.querySelectorAll("input, select, textarea"))
       .filter(el => el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0)
       .filter(el => !["hidden","submit","button","image","file","reset"].includes((el.type || "").toLowerCase()));
+
+    // Also collect custom option elements (ARIA roles, button groups, etc.)
+    const customOptions = Array.from(document.querySelectorAll(`
+      [role="radio"],
+      [role="checkbox"],
+      [role="option"],
+      button[data-option],
+      button[data-answer],
+      div[data-option],
+      div[data-answer],
+      .option-button,
+      .answer-choice,
+      .quiz-option
+    `)).filter(el => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+
+    // Merge both lists and remove duplicates (use Set to deduplicate)
+    const allInputs = [...new Set([...standardInputs, ...customOptions])];
 
     // Group radio buttons by name attribute (each group = 1 field)
     const radioGroups = new Map();
     const checkboxGroups = new Map();
+    const customOptionGroups = new Map();
     const otherInputs = [];
 
     for (const input of allInputs) {
       const type = (input.type || "").toLowerCase();
+      const role = input.getAttribute('role');
 
-      if (type === "radio") {
-        const groupName = input.name || `radio_${Math.random()}`;
+      // Handle standard radio inputs
+      if (type === "radio" || role === "radio") {
+        const groupName = input.name || input.getAttribute('data-group') || `radio_${Math.random()}`;
         if (!radioGroups.has(groupName)) {
           radioGroups.set(groupName, []);
         }
         radioGroups.get(groupName).push(input);
-      } else if (type === "checkbox") {
-        const groupName = input.name || `checkbox_${input.id || Math.random()}`;
+      }
+      // Handle standard checkbox inputs
+      else if (type === "checkbox" || role === "checkbox") {
+        const groupName = input.name || input.getAttribute('data-group') || `checkbox_${input.id || Math.random()}`;
         // Group checkboxes with same name together
-        if (input.name) {
+        if (input.name || input.getAttribute('data-group')) {
           if (!checkboxGroups.has(groupName)) {
             checkboxGroups.set(groupName, []);
           }
@@ -864,39 +910,58 @@
           // Standalone checkbox (no group)
           otherInputs.push(input);
         }
-      } else {
+      }
+      // Handle custom option groups (buttons/divs with data-group or common parent)
+      else if (role === "option" || input.hasAttribute('data-option') || input.hasAttribute('data-answer')) {
+        // Try to group by data-group attribute or common parent
+        const groupName = input.getAttribute('data-group') || input.getAttribute('data-question') || '';
+        if (groupName) {
+          if (!customOptionGroups.has(groupName)) {
+            customOptionGroups.set(groupName, []);
+          }
+          customOptionGroups.get(groupName).push(input);
+        } else {
+          // Try to group by common parent container
+          const container = input.closest('[role="radiogroup"], [role="group"], .options-container, .answer-choices, .quiz-options');
+          if (container) {
+            const containerKey = `custom_group_${Array.from(document.querySelectorAll('*')).indexOf(container)}`;
+            if (!customOptionGroups.has(containerKey)) {
+              customOptionGroups.set(containerKey, []);
+            }
+            customOptionGroups.get(containerKey).push(input);
+          } else {
+            otherInputs.push(input);
+          }
+        }
+      }
+      // Everything else (text inputs, textareas, selects)
+      else {
         otherInputs.push(input);
       }
     }
 
-    // Build final list: wrap groups as pseudo-elements
+    // Build final list: add each option individually (not grouped)
     const finalInputs = [];
 
+    // Add each radio button as a separate step
     for (const [name, radios] of radioGroups) {
-      // Create a pseudo-element representing the entire radio group
-      finalInputs.push({
-        _isGroup: true,
-        _type: "radio",
-        _name: name,
-        _elements: radios,
-        _primary: radios[0] // Focus on first element for positioning
+      radios.forEach(radio => {
+        finalInputs.push(radio);
       });
     }
 
+    // Add each checkbox as a separate step
     for (const [name, checkboxes] of checkboxGroups) {
-      if (checkboxes.length > 1) {
-        // Multiple checkboxes with same name = group
-        finalInputs.push({
-          _isGroup: true,
-          _type: "checkbox",
-          _name: name,
-          _elements: checkboxes,
-          _primary: checkboxes[0]
-        });
-      } else {
-        // Single checkbox with name = standalone
-        otherInputs.push(checkboxes[0]);
-      }
+      checkboxes.forEach(checkbox => {
+        finalInputs.push(checkbox);
+      });
+    }
+
+    // Add each custom option as a separate step
+    for (const [name, options] of customOptionGroups) {
+      options.forEach(option => {
+        finalInputs.push(option);
+      });
     }
 
     // Add all other inputs (text, textarea, select, standalone checkboxes)
@@ -1077,27 +1142,46 @@
     // Clear previous highlights
     document.querySelectorAll("." + HILITE_CLASS).forEach((e) => e.classList.remove(HILITE_CLASS));
 
-    // Handle grouped inputs (radio/checkbox groups)
-    if (item._isGroup) {
-      // Highlight ALL elements in the group
-      item._elements.forEach(el => {
-        el.classList.add(HILITE_CLASS);
-        // Also highlight parent label if exists
-        const label = el.closest("label") || document.querySelector(`label[for="${el.id}"]`);
-        if (label) label.classList.add(HILITE_CLASS);
-      });
+    // Find the best container to highlight (full option area)
+    let container = null;
 
-      // Scroll to the first element in the group
-      item._primary.scrollIntoView({ behavior: "smooth", block: "center" });
-      item._primary.focus();
+    // Try to find a label that wraps or is associated with this input
+    const wrappingLabel = item.closest("label");
+    const associatedLabel = item.id ? document.querySelector(`label[for="${item.id}"]`) : null;
 
-      console.log(`[Task Tunnel] Focused ${item._type} group "${item._name}" with ${item._elements.length} options`);
+    // Try to find a parent container that looks like an option
+    const optionContainer = item.closest(`
+      .option, .answer, .choice,
+      [class*="option"], [class*="answer"], [class*="choice"],
+      [role="radio"], [role="checkbox"],
+      li, div[onclick], button,
+      .form-group, .input-group, .field
+    `.trim());
+
+    // Choose the best container (prefer specific option containers, then labels, then the element itself)
+    if (wrappingLabel && wrappingLabel !== document.body) {
+      container = wrappingLabel;
+    } else if (associatedLabel) {
+      container = associatedLabel;
+    } else if (optionContainer && optionContainer !== document.body && optionContainer.offsetHeight < window.innerHeight * 0.8) {
+      // Only use option container if it's not too large (to avoid highlighting entire page)
+      container = optionContainer;
     } else {
-      // Regular input
-      highlightElement(item);
-      item.scrollIntoView({ behavior: "smooth", block: "center" });
-      item.focus();
+      container = item;
     }
+
+    // Highlight the container
+    container.classList.add(HILITE_CLASS);
+
+    // Scroll and focus
+    item.scrollIntoView({ behavior: "smooth", block: "center" });
+    try {
+      item.focus();
+    } catch (e) {
+      // Some elements can't be focused, that's ok
+    }
+
+    console.log(`[Task Tunnel] Focused step ${tunnelState.idx + 1}/${tunnelState.inputs.length}`);
   }
 
   // ========== INTELLIGENT PAGE SIMPLIFICATION ==========

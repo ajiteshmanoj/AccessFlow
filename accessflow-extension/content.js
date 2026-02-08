@@ -1169,7 +1169,62 @@
       }
 
       if (isFinal) {
-        // Commit final text into the field (use saved original + final transcript)
+        const cmd = transcript.trim().toLowerCase();
+
+        // Voice commands — navigate instead of typing
+        if (["next", "next field", "go next", "skip"].includes(cmd)) {
+          // Restore original value (undo interim preview)
+          if (targetEl.isContentEditable) {
+            targetEl.textContent = targetEl.dataset.afOriginal || "";
+          } else {
+            targetEl.value = targetEl.dataset.afOriginal || "";
+            targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          updateTunnelVoicePreview("");
+          console.log(`[Tunnel Voice] Command: next`);
+          setTimeout(() => {
+            if (!tunnelState.active) return;
+            for (let i = tunnelState.idx + 1; i < tunnelState.inputs.length; i++) {
+              if (isTextInput(tunnelState.inputs[i])) {
+                tunnelState.idx = i;
+                focusTunnelCurrent();
+                return;
+              }
+            }
+          }, 200);
+          return;
+        }
+
+        if (["previous", "go back", "back", "prev"].includes(cmd)) {
+          if (targetEl.isContentEditable) {
+            targetEl.textContent = targetEl.dataset.afOriginal || "";
+          } else {
+            targetEl.value = targetEl.dataset.afOriginal || "";
+            targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          updateTunnelVoicePreview("");
+          console.log(`[Tunnel Voice] Command: previous`);
+          setTimeout(() => {
+            if (!tunnelState.active) return;
+            for (let i = tunnelState.idx - 1; i >= 0; i--) {
+              if (isTextInput(tunnelState.inputs[i])) {
+                tunnelState.idx = i;
+                focusTunnelCurrent();
+                return;
+              }
+            }
+          }, 200);
+          return;
+        }
+
+        if (["exit", "stop", "quit", "exit tunnel"].includes(cmd)) {
+          updateTunnelVoicePreview("");
+          console.log(`[Tunnel Voice] Command: exit`);
+          document.getElementById("af-exit")?.click();
+          return;
+        }
+
+        // Normal text — commit into the field
         typeInto(targetEl, (targetEl.dataset.afOriginal || "") + transcript);
         updateTunnelVoicePreview("");
         console.log(`[Tunnel Voice] Final: "${transcript}"`);
@@ -1983,9 +2038,10 @@
       return;
     }
 
-    // Stop tunnel voice so sidepanel can take over cleanly
-    if (tunnelVoiceActive) {
-      stopTunnelVoice();
+    // If tunnel voice is active, don't let sidepanel voice take over
+    if (tunnelVoiceActive && tunnelState.active) {
+      port.postMessage({ type: "VOICE_ERROR", error: "Voice is being used by Task Tunnel. Exit tunnel first." });
+      return;
     }
 
     // Stop any previous session

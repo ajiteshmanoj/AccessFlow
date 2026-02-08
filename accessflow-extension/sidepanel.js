@@ -1566,7 +1566,11 @@ async function ensureOffscreenDocument() {
 async function startLocalVoice() {
   try {
     await ensureOffscreenDocument();
-    await chrome.runtime.sendMessage({ target: "offscreen-voice", type: "START_VOICE" });
+    const res = await chrome.runtime.sendMessage({ target: "offscreen-voice", type: "START_VOICE" });
+    if (res && !res.ok) {
+      log(res.error || "Could not start voice.");
+      return false;
+    }
     return true;
   } catch (e) {
     log("Could not start voice: " + e.message);

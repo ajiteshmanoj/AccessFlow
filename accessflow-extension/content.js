@@ -1164,13 +1164,18 @@
         updateTunnelVoicePreview("");
         console.log(`[Tunnel Voice] Final: "${transcript}"`);
 
-        // Auto-advance after a short delay
+        // Auto-advance to the next text field after a short delay
         setTimeout(() => {
           if (!tunnelState.active) return;
-          if (tunnelState.idx < tunnelState.inputs.length - 1) {
-            tunnelState.idx++;
-            focusTunnelCurrent();
+          // Find the next text input, skipping non-text fields
+          for (let i = tunnelState.idx + 1; i < tunnelState.inputs.length; i++) {
+            if (isTextInput(tunnelState.inputs[i])) {
+              tunnelState.idx = i;
+              focusTunnelCurrent();
+              return;
+            }
           }
+          // No more text fields ahead — stay put
         }, 500);
       } else {
         // Show interim preview

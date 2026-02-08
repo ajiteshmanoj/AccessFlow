@@ -1048,9 +1048,7 @@
           stopTunnelVoice();
         } else {
           const item = tunnelState.inputs[tunnelState.idx];
-          if (item && isTextInput(item)) {
-            startTunnelVoice();
-          }
+          if (item) startTunnelVoice();
         }
         updateTunnelMicUI(tunnelVoiceActive);
       };
@@ -1126,8 +1124,8 @@
 
     console.log(`[Task Tunnel] Focused step ${tunnelState.idx + 1}/${tunnelState.inputs.length}`);
 
-    // Auto-start voice on text fields
-    if (tunnelVoiceMicEnabled && isTextInput(item)) {
+    // Auto-start voice on all fields (text fields get dictation, others get command-only)
+    if (tunnelVoiceMicEnabled) {
       setTimeout(() => startTunnelVoice(), 200);
     } else {
       stopTunnelVoice();
@@ -1155,11 +1153,12 @@
 
     const doStart = () => {
     const targetEl = tunnelState.inputs[tunnelState.idx];
-    if (!targetEl || !isTextInput(targetEl)) {
+    if (!targetEl) {
       tunnelVoiceActive = false;
       updateTunnelMicUI(false);
       return;
     }
+    const isText = isTextInput(targetEl);
 
     tunnelVoiceRecognition = new SpeechRecognition();
     tunnelVoiceRecognition.continuous = false;
@@ -1177,47 +1176,61 @@
       if (isFinal) {
         const cmd = transcript.trim().toLowerCase();
 
-        // Voice commands — navigate instead of typing
+        // === Universal voice commands (work on ALL field types) ===
+
+        if (["click", "select", "press", "choose", "pick"].includes(cmd)) {
+          updateTunnelVoicePreview("");
+          console.log(`[Tunnel Voice] Command: click`);
+          targetEl.click();
+          // Auto-advance to next field after clicking
+          setTimeout(() => {
+            if (!tunnelState.active) return;
+            if (tunnelState.idx < tunnelState.inputs.length - 1) {
+              tunnelState.idx++;
+              focusTunnelCurrent();
+            }
+          }, 300);
+          return;
+        }
+
         if (["next", "next field", "go next", "skip"].includes(cmd)) {
-          // Restore original value (undo interim preview)
-          if (targetEl.isContentEditable) {
-            targetEl.textContent = targetEl.dataset.afOriginal || "";
-          } else {
-            targetEl.value = targetEl.dataset.afOriginal || "";
-            targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+          if (isText) {
+            // Restore original value (undo interim preview)
+            if (targetEl.isContentEditable) {
+              targetEl.textContent = targetEl.dataset.afOriginal || "";
+            } else {
+              targetEl.value = targetEl.dataset.afOriginal || "";
+              targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+            }
           }
           updateTunnelVoicePreview("");
           console.log(`[Tunnel Voice] Command: next`);
           setTimeout(() => {
             if (!tunnelState.active) return;
-            for (let i = tunnelState.idx + 1; i < tunnelState.inputs.length; i++) {
-              if (isTextInput(tunnelState.inputs[i])) {
-                tunnelState.idx = i;
-                focusTunnelCurrent();
-                return;
-              }
+            if (tunnelState.idx < tunnelState.inputs.length - 1) {
+              tunnelState.idx++;
+              focusTunnelCurrent();
             }
           }, 200);
           return;
         }
 
         if (["previous", "go back", "back", "prev"].includes(cmd)) {
-          if (targetEl.isContentEditable) {
-            targetEl.textContent = targetEl.dataset.afOriginal || "";
-          } else {
-            targetEl.value = targetEl.dataset.afOriginal || "";
-            targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+          if (isText) {
+            if (targetEl.isContentEditable) {
+              targetEl.textContent = targetEl.dataset.afOriginal || "";
+            } else {
+              targetEl.value = targetEl.dataset.afOriginal || "";
+              targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+            }
           }
           updateTunnelVoicePreview("");
           console.log(`[Tunnel Voice] Command: previous`);
           setTimeout(() => {
             if (!tunnelState.active) return;
-            for (let i = tunnelState.idx - 1; i >= 0; i--) {
-              if (isTextInput(tunnelState.inputs[i])) {
-                tunnelState.idx = i;
-                focusTunnelCurrent();
-                return;
-              }
+            if (tunnelState.idx > 0) {
+              tunnelState.idx--;
+              focusTunnelCurrent();
             }
           }, 200);
           return;
@@ -1230,41 +1243,47 @@
           return;
         }
 
-        // Normal text — commit into the field
-        typeInto(targetEl, (targetEl.dataset.afOriginal || "") + transcript);
-        updateTunnelVoicePreview("");
-        console.log(`[Tunnel Voice] Final: "${transcript}"`);
+        // === Text field only: type the spoken text ===
+        if (isText) {
+          typeInto(targetEl, (targetEl.dataset.afOriginal || "") + transcript);
+          updateTunnelVoicePreview("");
+          console.log(`[Tunnel Voice] Final: "${transcript}"`);
 
-        // Auto-advance to the next text field after a short delay
-        setTimeout(() => {
-          if (!tunnelState.active) return;
-          // Find the next text input, skipping non-text fields
-          for (let i = tunnelState.idx + 1; i < tunnelState.inputs.length; i++) {
-            if (isTextInput(tunnelState.inputs[i])) {
-              tunnelState.idx = i;
-              focusTunnelCurrent();
-              return;
+          // Auto-advance to the next text field after a short delay
+          setTimeout(() => {
+            if (!tunnelState.active) return;
+            for (let i = tunnelState.idx + 1; i < tunnelState.inputs.length; i++) {
+              if (isTextInput(tunnelState.inputs[i])) {
+                tunnelState.idx = i;
+                focusTunnelCurrent();
+                return;
+              }
             }
-          }
-          // No more text fields ahead — stay put
-        }, 500);
+          }, 500);
+        } else {
+          // Non-text field: unrecognized command, ignore and re-listen
+          updateTunnelVoicePreview("");
+          console.log(`[Tunnel Voice] Ignored on non-text field: "${transcript}"`);
+        }
       } else {
         // Show interim preview
         updateTunnelVoicePreview(transcript);
-        // Also live-update the field with interim text
-        if (targetEl.isContentEditable) {
-          targetEl.textContent = (targetEl.dataset.afOriginal || "") + transcript;
-        } else {
-          targetEl.value = (targetEl.dataset.afOriginal || "") + transcript;
-          targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+        // Only live-update text fields with interim text
+        if (isText) {
+          if (targetEl.isContentEditable) {
+            targetEl.textContent = (targetEl.dataset.afOriginal || "") + transcript;
+          } else {
+            targetEl.value = (targetEl.dataset.afOriginal || "") + transcript;
+            targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
         }
       }
     };
 
     tunnelVoiceRecognition.onstart = () => {
-      // Save original field value so interim updates append correctly
+      // Save original field value so interim updates append correctly (text fields only)
       const el = tunnelState.inputs[tunnelState.idx];
-      if (el) {
+      if (el && isText) {
         el.dataset.afOriginal = el.isContentEditable ? (el.textContent || "") : (el.value || "");
       }
     };

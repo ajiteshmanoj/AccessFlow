@@ -346,7 +346,8 @@ let isSimplifyActive = false;
 
 document.getElementById("simplify").onclick = async () => {
   if (isSimplifyActive) {
-    // Toggle OFF
+    // Toggle OFF - Remove both focus mode and AI simplification
+    await sendToActiveTab({ type: "FOCUS_OFF" });
     await sendToActiveTab({ type: "SIMPLIFY_OFF" });
     document.getElementById("simplify").classList.remove("active");
     isSimplifyActive = false;
@@ -355,14 +356,18 @@ document.getElementById("simplify").onclick = async () => {
     return;
   }
 
-  // Toggle ON - Get page content
+  // Toggle ON - First activate Light focus mode to hide ads
+  log("Activating Light focus mode...");
+  await sendToActiveTab({ type: "FOCUS_ON", intensity: "light" });
+
+  // Then get page content for AI analysis
   log("Analyzing page with AI...");
   const res = await sendToActiveTab({ type: "SIMPLIFY_ON" });
 
   if (res?.pageData) {
     try {
       // Call backend API
-      const apiRes = await fetch("http://localhost:8000/api/simplify", {
+      const apiRes = await fetch(`${BACKEND}/api/simplify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -394,7 +399,7 @@ document.getElementById("simplify").onclick = async () => {
         data.changes_description.forEach(change => log("  • " + change));
       }
     } catch (err) {
-      log("Error: " + err.message + ". Make sure backend is running on localhost:8000");
+      log("Error: " + err.message + ". Make sure backend is running on " + BACKEND);
     }
   } else {
     log("Could not get page content: " + (res?.message || "Unknown error"));

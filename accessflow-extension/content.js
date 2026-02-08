@@ -87,6 +87,9 @@
     // Clean up Inclusive Mode
     cleanupInclusiveMode();
 
+    // Stop Focus Mode observer
+    stopFocusModeObserver();
+
     // Stop Task Tunnel observer
     if (tunnelObserver) {
       tunnelObserver.disconnect();
@@ -113,6 +116,9 @@
       // Remove inline hiding used by Focus Mode
       document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
         e.style.removeProperty("display");
+        e.style.removeProperty("opacity");
+        e.style.removeProperty("pointer-events");
+        e.style.removeProperty("transition");
         e.removeAttribute("data-accessflow-hidden");
       });
 
@@ -127,6 +133,13 @@
   let inclusiveModeObserver = null;
   let inclusiveModeInterval = null;
   let currentInclusiveFontSize = 18;
+
+  // ========== FOCUS MODE OBSERVER ==========
+  let focusModeObserver = null;
+  let focusModeSelectors = [];
+  let focusModeIntensity = "medium";
+  let focusModeScrollListener = null;
+  let focusModeInterval = null;
 
   function generateInclusiveCSS(fontSize) {
     return `
@@ -172,8 +185,8 @@
       /* Reduce motion */
       *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 
-      /* Highlight class */
-      .${HILITE_CLASS} { outline: 4px solid #f59e0b !important; outline-offset: 3px !important; border-radius: 8px !important; }
+      /* Highlight class - subtle and less intrusive */
+      .${HILITE_CLASS} { outline: 2px solid #f59e0b !important; outline-offset: 1px !important; }
     `;
   }
 
@@ -284,75 +297,325 @@
   }
   // ========== END ENHANCED INCLUSIVE MODE ==========
 
+  // Helper function to detect if element contains article/news content
+  function isArticleContent(el) {
+    // Check for article-like structure
+    const hasHeading = el.querySelector('h1, h2, h3, h4');
+    const hasLinks = el.querySelector('a[href*="article"], a[href*="story"], a[href*="news"]');
+    const hasParagraphs = el.querySelectorAll('p').length > 0;
+
+    // If it has article-like content, protect it
+    if (hasHeading && (hasLinks || hasParagraphs)) {
+      return true;
+    }
+
+    // Check for substantial text content (likely an article)
+    const textContent = el.textContent?.trim() || '';
+    if (textContent.length > 200) {
+      // Has enough text to be meaningful content
+      return true;
+    }
+
+    return false;
+  }
+
+  // Helper function to check if element should be hidden by Focus Mode
+  function shouldHideElement(el) {
+    // Never hide body
+    if (el === document.body) return false;
+
+    // Check if element contains article content
+    if (isArticleContent(el)) {
+      return false; // Protect article content
+    }
+
+    // Check if element has ad-related keywords in attributes (strong signal it's an ad)
+    const allAttrs = Array.from(el.attributes || []).map(attr =>
+      `${attr.name}=${attr.value}`.toLowerCase()
+    ).join(' ');
+
+    const adKeywords = ['ad-', 'advert', 'sponsor', 'commercial', 'banner'];
+    const hasStrongAdKeywords = adKeywords.some(keyword => allAttrs.includes(keyword));
+
+    // If it has strong ad indicators AND doesn't contain article content, hide it
+    if (hasStrongAdKeywords) {
+      return true;
+    }
+
+    // CONSERVATIVE: Protect all content inside main/article unless it's clearly an ad
+    // This prevents hiding legitimate news content
+    if (el.closest("main") || el.closest("article") || el.closest("[role='main']")) {
+      return false;
+    }
+
+    // Don't hide if it's a large content container (might be the article itself)
+    const rect = el.getBoundingClientRect();
+    if (rect.height > window.innerHeight * 0.5) return false;
+
+    // For elements outside main/article (like nav, footer, true sidebars)
+    // Only hide if they match our selectors
+    // But be extra careful with "aside" - many sites use it for related content
+    const tagName = el.tagName.toLowerCase();
+    if (tagName === 'aside') {
+      // Only hide aside if it's clearly not content (has ad keywords or is in header/footer)
+      // AND doesn't contain article content
+      const inHeaderOrFooter = el.closest('header') || el.closest('footer');
+      return inHeaderOrFooter || hasStrongAdKeywords;
+    }
+
+    // Safe to hide: nav, footer, and elements with explicit ad classes
+    return true;
+  }
+
+  // Helper function to hide an element with Focus Mode styling
+  function hideElementForFocus(el) {
+    if (!shouldHideElement(el)) return;
+
+    // Use opacity instead of display:none to avoid layout shifts and white boxes
+    el.style.opacity = "0.15";
+    el.style.pointerEvents = "none";
+    el.style.transition = "opacity 0.3s ease";
+    el.setAttribute("data-accessflow-hidden", "1");
+  }
+
+  // Apply Focus Mode hiding to existing elements
+  function applyFocusHiding() {
+    focusModeSelectors.forEach((sel) => {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (!el.hasAttribute("data-accessflow-hidden")) {
+          hideElementForFocus(el);
+        }
+      });
+    });
+  }
+
+  // Start monitoring for dynamically loaded elements
+  function startFocusModeObserver() {
+    if (focusModeObserver) {
+      focusModeObserver.disconnect();
+    }
+
+    focusModeObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === 1) { // Element node
+            // Check if the node itself matches any selector
+            focusModeSelectors.forEach((sel) => {
+              try {
+                if (node.matches && node.matches(sel)) {
+                  hideElementForFocus(node);
+                }
+                // Also check descendants
+                node.querySelectorAll && node.querySelectorAll(sel).forEach((el) => {
+                  hideElementForFocus(el);
+                });
+              } catch (e) {
+                // Invalid selector, skip
+              }
+            });
+          }
+        });
+      });
+    });
+
+    focusModeObserver.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  // Add scroll listener to catch ads that become visible as user scrolls
+  function startFocusModeScrollListener() {
+    if (focusModeScrollListener) {
+      window.removeEventListener('scroll', focusModeScrollListener);
+    }
+
+    let scrollTimeout;
+    focusModeScrollListener = () => {
+      // Debounce: only re-apply after user stops scrolling for 100ms
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        applyFocusHiding();
+      }, 100);
+    };
+
+    window.addEventListener('scroll', focusModeScrollListener, { passive: true });
+  }
+
+  function stopFocusModeScrollListener() {
+    if (focusModeScrollListener) {
+      window.removeEventListener('scroll', focusModeScrollListener);
+      focusModeScrollListener = null;
+    }
+  }
+
+  function stopFocusModeObserver() {
+    if (focusModeObserver) {
+      focusModeObserver.disconnect();
+      focusModeObserver = null;
+    }
+    stopFocusModeScrollListener();
+    if (focusModeInterval) {
+      clearInterval(focusModeInterval);
+      focusModeInterval = null;
+    }
+    focusModeSelectors = [];
+  }
+
   function focusMode(intensity = "medium") {
-    let selectorsToHide = [];
+    // Stop any existing observer
+    stopFocusModeObserver();
+
+    // Store intensity globally
+    focusModeIntensity = intensity;
+
+    // Detect site type for specialized handling
+    const hostname = window.location.hostname.toLowerCase();
+    const isEcommerce = hostname.includes('amazon') || hostname.includes('ebay') ||
+                       hostname.includes('walmart') || hostname.includes('target') ||
+                       hostname.includes('etsy') || hostname.includes('alibaba') ||
+                       hostname.includes('shop') || hostname.includes('store');
+
+    // E-commerce sites: only hide obvious ads, not product content
+    if (isEcommerce) {
+      focusModeSelectors = [
+        // Only hide very obvious ads
+        "[class*='ad-banner']", "[class*='adbanner']",
+        "[id*='ad-banner']", "[id*='adbanner']",
+        "[class*='sponsored-ad']", "[class*='display-ad']",
+        "[data-component*='ad-banner']",
+        "iframe[src*='ads']", "iframe[src*='doubleclick']", "iframe[src*='googlesyndication']",
+        // Popups & cookies (still relevant)
+        "[class*='cookie']", "[id*='cookie']",
+        "[class*='gdpr']", "[id*='gdpr']",
+        "[class*='consent']", "[id*='consent']",
+        "[role='dialog']:not([aria-label*='cart']):not([aria-label*='Cart'])",
+        ".modal:not([class*='cart']):not([class*='checkout'])",
+        ".popup:not([class*='cart'])"
+      ];
+
+      // Apply hiding and start observers
+      applyFocusHiding();
+      startFocusModeObserver();
+      startFocusModeScrollListener();
+      focusModeInterval = setInterval(() => { applyFocusHiding(); }, 2000);
+
+      return; // Skip the news site logic below
+    }
 
     // Light mode - minimal hiding (ads, popups, cookies only)
     if (intensity === "light") {
-      selectorsToHide = [
+      focusModeSelectors = [
+        // Ad variations - only very obvious ads
         "[class*='advert']", "[id*='advert']",
         "[class*='ad-']", "[id*='ad-']",
+        "[class*='ad_']", "[id*='ad_']",
+        "[class*='_ad']", "[id*='_ad']",
+        "[class*='sponsor']", "[id*='sponsor']",
+        "[class*='commercial']", "[id*='commercial']",
+        "[class*='ad-banner']", "[class*='adbanner']",
+        "[data-component*='ad']",
+        "[aria-label*='advertisement']", "[aria-label*='sponsored']",
+        "iframe[src*='ads']", "iframe[src*='doubleclick']", "iframe[src*='googlesyndication']",
+        // Cookies & popups
         "[class*='cookie']", "[id*='cookie']",
+        "[class*='gdpr']", "[id*='gdpr']",
+        "[class*='consent']", "[id*='consent']",
         "[role='dialog']", ".modal", ".popup"
       ];
     }
     // Medium mode - current behavior (default)
     else if (intensity === "medium") {
-      selectorsToHide = [
-        "aside", "nav", "footer",
-        "[class*='sidebar']", "[id*='sidebar']",
+      focusModeSelectors = [
+        // Only hide very obvious ads - no nav/footer/sidebars by default
+        // This prevents accidentally hiding article listings
         "[class*='advert']", "[id*='advert']",
         "[class*='ad-']", "[id*='ad-']",
+        "[class*='ad_']", "[id*='ad_']",
+        "[class*='_ad']", "[id*='_ad']",
+        "[class*='sponsor']", "[id*='sponsor']",
+        "[class*='commercial']", "[id*='commercial']",
+        "[class*='ad-banner']", "[class*='adbanner']",
+        "[data-component*='ad']",
+        "[data-testid*='ad']",
+        "[aria-label*='advertisement']", "[aria-label*='sponsored']",
+        "iframe[src*='ads']", "iframe[src*='doubleclick']", "iframe[src*='googlesyndication']",
+        // Cookies & popups
         "[class*='cookie']", "[id*='cookie']",
+        "[class*='gdpr']", "[id*='gdpr']",
+        "[class*='consent']", "[id*='consent']",
         "[role='dialog']", ".modal", ".popup"
       ];
     }
     // Aggressive mode - maximum hiding
     else if (intensity === "aggressive") {
-      selectorsToHide = [
-        // Everything from medium
-        "aside", "nav", "footer",
-        "[class*='sidebar']", "[id*='sidebar']",
+      focusModeSelectors = [
+        // Include page structure elements (nav, footer, sidebar)
+        "nav:not(main nav):not(article nav)",
+        "footer",
+        "[class*='sidebar']:not(main *):not(article *)",
+        "[id*='sidebar']:not(main *):not(article *)",
+        // Ad variations
         "[class*='advert']", "[id*='advert']",
         "[class*='ad-']", "[id*='ad-']",
+        "[class*='ad_']", "[id*='ad_']",
+        "[class*='_ad']", "[id*='_ad']",
+        "[class*='sponsor']", "[id*='sponsor']",
+        "[class*='commercial']", "[id*='commercial']",
+        "[class*='ad-banner']", "[class*='adbanner']",
+        "[data-component*='ad']",
+        "[data-testid*='ad']",
+        "[aria-label*='advertisement']", "[aria-label*='sponsored']",
+        "iframe[src*='ads']", "iframe[src*='doubleclick']", "iframe[src*='googlesyndication']",
+        // Cookies & popups
         "[class*='cookie']", "[id*='cookie']",
+        "[class*='gdpr']", "[id*='gdpr']",
+        "[class*='consent']", "[id*='consent']",
         "[role='dialog']", ".modal", ".popup",
 
         // Additional aggressive selectors - more specific to avoid hiding main content
         "header:not(main header):not(article header)",
         "section[class*='comment']:not(main section):not(article section)",
         "div[class*='comment']:not(main div):not(article div)",
-        "aside[class*='related']",
-        "div[class*='social-share']",
-        "div[class*='share-buttons']",
+        "div[class*='social-share']:not(main *):not(article *)",
+        "div[class*='share-buttons']:not(main *):not(article *)",
         "nav[class*='breadcrumb']",
-        "div[class*='author-bio']",
-        "div[class*='newsletter']",
-        "form[class*='subscribe']"
+        "div[class*='newsletter']:not(main *):not(article *)",
+        "form[class*='subscribe']:not(main *):not(article *)",
+        "[class*='recommended']:not(main *):not(article *)",
+        "[class*='trending']:not(main *):not(article *)",
+        "[class*='popular']:not(main *):not(article *)"
       ];
     }
 
-    selectorsToHide.forEach((sel) => {
-      document.querySelectorAll(sel).forEach((el) => {
-        // Triple check: don't hide main content or body
-        if (el === document.body) return;
-        if (el.closest("main")) return;
-        if (el.closest("article")) return;
-        if (el.closest("[role='main']")) return;
+    // Apply hiding to existing elements
+    applyFocusHiding();
 
-        // Don't hide if it's a large content container
-        const rect = el.getBoundingClientRect();
-        if (rect.height > window.innerHeight * 0.5) return; // Don't hide large containers
+    // Start observing for new elements (catches dynamically added ads)
+    startFocusModeObserver();
 
-        el.style.display = "none";
-        el.setAttribute("data-accessflow-hidden", "1");
-      });
-    });
+    // Start scroll listener (catches ads that were already in DOM but become visible on scroll)
+    startFocusModeScrollListener();
 
-    // Highlight main content if available
-    const main = document.querySelector("main") || document.querySelector("article") || document.body;
-    highlightElement(main);
-    main.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Periodically re-apply hiding to catch ads loaded via timers or other async mechanisms
+    focusModeInterval = setInterval(() => {
+      applyFocusHiding();
+    }, 2000); // Re-check every 2 seconds
+
+    // Highlight main content if available, but DON'T auto-scroll (avoid jarring behavior)
+    const main = document.querySelector("main") || document.querySelector("article");
+
+    // Only highlight if we found a specific main/article element (not body)
+    if (main) {
+      const rect = main.getBoundingClientRect();
+      const isFullScreen = rect.width > window.innerWidth * 0.9 && rect.height > window.innerHeight * 0.9;
+
+      // Only highlight if it's not a full-screen element (avoids white box effect)
+      // Removed auto-scroll to prevent page jumping
+      if (!isFullScreen) {
+        highlightElement(main);
+      }
+    }
   }
 
   function highlightElement(el) {
@@ -1804,6 +2067,9 @@
         // First, restore all previously hidden elements
         document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
           e.style.removeProperty("display");
+          e.style.removeProperty("opacity");
+          e.style.removeProperty("pointer-events");
+          e.style.removeProperty("transition");
           e.removeAttribute("data-accessflow-hidden");
         });
         // Remove old highlights
@@ -1816,9 +2082,15 @@
         return true;
       }
       if (msg?.type === "FOCUS_OFF") {
-        // Remove hidden elements
+        // Stop the Focus Mode observer
+        stopFocusModeObserver();
+
+        // Remove hidden elements and restore their properties
         document.querySelectorAll("[data-accessflow-hidden='1']").forEach((e) => {
           e.style.removeProperty("display");
+          e.style.removeProperty("opacity");
+          e.style.removeProperty("pointer-events");
+          e.style.removeProperty("transition");
           e.removeAttribute("data-accessflow-hidden");
         });
         // Remove highlight

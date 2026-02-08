@@ -2467,7 +2467,7 @@
         left: 0;
         width: 100vw;
         height: 40px;
-        background: rgba(255, 255, 0, 0.15);
+        background: rgba(255, 255, 0, 0.35);
         pointer-events: none;
         z-index: 2147483645;
         transition: transform 0.05s linear;

@@ -1428,8 +1428,6 @@ function stopListening() {
     try { voicePort.disconnect(); } catch (_) {}
     voicePort = null;
   }
-  // Clean up local voice if active
-  stopLocalVoice();
   // Clear status and timer
   const statusEl = document.getElementById("voice-status");
   if (statusEl) statusEl.textContent = "";
@@ -1546,72 +1544,32 @@ function handleVoiceMessage(msg) {
   }
 }
 
-// --- Offscreen-document voice recognition (for restricted URLs like chrome://newtab) ---
-let isLocalVoiceMode = false;
-
-async function ensureOffscreenDocument() {
-  // Check if we already have an offscreen document
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ["OFFSCREEN_DOCUMENT"]
-  });
-  if (contexts.length > 0) return;
-
-  await chrome.offscreen.createDocument({
-    url: "offscreen.html",
-    reasons: ["USER_MEDIA"],
-    justification: "Speech recognition for voice commands on restricted pages"
-  });
-}
-
-async function startLocalVoice() {
-  try {
-    await ensureOffscreenDocument();
-    const res = await chrome.runtime.sendMessage({ target: "offscreen-voice", type: "START_VOICE" });
-    if (res && !res.ok) {
-      log(res.error || "Could not start voice.");
-      return false;
-    }
-    return true;
-  } catch (e) {
-    log("Could not start voice: " + e.message);
-    return false;
-  }
-}
-
-function stopLocalVoice() {
-  if (isLocalVoiceMode) {
-    chrome.runtime.sendMessage({ target: "offscreen-voice", type: "STOP_VOICE" }).catch(() => {});
-  }
-  isLocalVoiceMode = false;
-}
-
-// Listen for voice results from the offscreen document
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "OFFSCREEN_VOICE_RESULT") {
-    handleVoiceMessage({ type: "VOICE_RESULT", transcript: msg.transcript, isFinal: msg.isFinal });
-  }
-  if (msg.type === "OFFSCREEN_VOICE_ERROR") {
-    log("Speech error: " + msg.error);
-    stopListening();
-  }
-});
 
 async function startListening() {
   if (isListening) return;
 
-  const tab = await getActiveTab();
-  const restricted = !tab?.id || isRestrictedUrl(tab.url || "");
+  let tab = await getActiveTab();
 
-  if (restricted) {
-    // Use offscreen document for Speech Recognition (no content script needed)
-    if (!(await startLocalVoice())) return;
-    isLocalVoiceMode = true;
-    isListening = true;
-    micBtn.classList.add("listening");
-    playStartChime();
-    document.getElementById("cmd").value = "";
-    log("🎤 Voice active — say \"go to youtube\" or \"open gmail.com\"");
-    return;
+  // If on a restricted page (chrome://newtab, etc.), navigate to google.com
+  // so the content script can be injected for mic access.
+  if (!tab?.id || isRestrictedUrl(tab.url || "")) {
+    log("Opening Google so voice can access the mic...");
+    await chrome.tabs.update(tab.id, { url: "https://www.google.com" });
+    // Wait for the page to finish loading
+    await new Promise((resolve) => {
+      const onUpdated = (tabId, info) => {
+        if (tabId === tab.id && info.status === "complete") {
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      // Safety timeout — don't wait forever
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(onUpdated); resolve(); }, 5000);
+    });
+    // Small extra delay for content script to initialize
+    await new Promise(r => setTimeout(r, 300));
+    tab = await getActiveTab();
   }
 
   await ensureContentScript(tab.id);
@@ -1632,7 +1590,6 @@ async function startListening() {
   });
 
   isListening = true;
-  isLocalVoiceMode = false;
   micBtn.classList.add("listening");
   playStartChime();
   document.getElementById("cmd").value = "";

@@ -100,6 +100,7 @@
       tunnelRefreshTimeout = null;
     }
     tunnelState.active = false;
+    stopTunnelVoice();
 
     // Additional cleanup for other modes
     setTimeout(() => {
@@ -853,6 +854,23 @@
   let tunnelState = { active: false, idx: 0, inputs: [] };
   let tunnelObserver = null;
 
+  // Tunnel Voice: auto voice input for text fields in Task Tunnel
+  let tunnelVoiceActive = false;
+  let tunnelVoiceMicEnabled = true;
+  let tunnelVoiceRecognition = null;
+
+  function isTextInput(el) {
+    if (!el) return false;
+    const tag = el.tagName?.toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag === "input") {
+      const t = (el.type || "text").toLowerCase();
+      return ["text","email","url","search","tel","password","number"].includes(t);
+    }
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
   function collectTunnelInputs() {
     // Collect standard form inputs
     const standardInputs = Array.from(document.querySelectorAll("input, select, textarea"))
@@ -1002,9 +1020,11 @@
           <strong>Task Tunnel</strong>
           <span id="af-step" style="color:#6b7280;"></span>
         </div>
+        <div id="af-voice-preview" style="font-size:11px;color:#6b7280;margin-top:4px;min-height:14px;font-style:italic;"></div>
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button id="af-prev" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#f3f4f6;cursor:pointer;">Prev</button>
           <button id="af-next" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#eef2ff;cursor:pointer;">Next</button>
+          <button id="af-mic" style="padding:6px 10px;border:1px solid #10b981;border-radius:10px;background:#d1fae5;cursor:pointer;">🎤 Ready</button>
           <button id="af-exit" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff1f2;cursor:pointer;">Exit</button>
         </div>
       `;
@@ -1012,7 +1032,20 @@
 
       overlay.querySelector("#af-prev").onclick = () => { tunnelState.idx = Math.max(0, tunnelState.idx - 1); focusTunnelCurrent(); };
       overlay.querySelector("#af-next").onclick = () => { tunnelState.idx = Math.min(tunnelState.inputs.length - 1, tunnelState.idx + 1); focusTunnelCurrent(); };
+      overlay.querySelector("#af-mic").onclick = () => {
+        tunnelVoiceMicEnabled = !tunnelVoiceMicEnabled;
+        if (!tunnelVoiceMicEnabled) {
+          stopTunnelVoice();
+        } else {
+          const item = tunnelState.inputs[tunnelState.idx];
+          if (item && isTextInput(item)) {
+            startTunnelVoice();
+          }
+        }
+        updateTunnelMicUI(tunnelVoiceActive);
+      };
       overlay.querySelector("#af-exit").onclick = () => {
+        stopTunnelVoice();
         tunnelState.active = false;
         if (tunnelObserver) {
           tunnelObserver.disconnect();
@@ -1082,6 +1115,142 @@
     }
 
     console.log(`[Task Tunnel] Focused step ${tunnelState.idx + 1}/${tunnelState.inputs.length}`);
+
+    // Auto-start voice on text fields
+    if (tunnelVoiceMicEnabled && isTextInput(item)) {
+      setTimeout(() => startTunnelVoice(), 200);
+    } else {
+      stopTunnelVoice();
+    }
+  }
+
+  // ========== TUNNEL VOICE INPUT ==========
+
+  function startTunnelVoice() {
+    if (!SpeechRecognition) return;
+    // Abort any existing tunnel voice session
+    if (tunnelVoiceRecognition) {
+      try { tunnelVoiceRecognition.abort(); } catch (_) {}
+      tunnelVoiceRecognition = null;
+    }
+    // Also stop sidepanel voice so they don't conflict
+    if (voiceRecognition) {
+      try { voiceRecognition.abort(); } catch (_) {}
+      voiceRecognition = null;
+    }
+
+    const targetEl = tunnelState.inputs[tunnelState.idx];
+    if (!targetEl || !isTextInput(targetEl)) return;
+
+    tunnelVoiceRecognition = new SpeechRecognition();
+    tunnelVoiceRecognition.continuous = false;
+    tunnelVoiceRecognition.interimResults = true;
+    tunnelVoiceRecognition.lang = "en-US";
+
+    tunnelVoiceActive = true;
+    updateTunnelMicUI(true);
+
+    tunnelVoiceRecognition.onresult = (event) => {
+      let transcript = "";
+      let isFinal = false;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+        if (event.results[i].isFinal) isFinal = true;
+      }
+
+      if (isFinal) {
+        // Commit final text into the field (use saved original + final transcript)
+        typeInto(targetEl, (targetEl.dataset.afOriginal || "") + transcript);
+        updateTunnelVoicePreview("");
+        console.log(`[Tunnel Voice] Final: "${transcript}"`);
+
+        // Auto-advance after a short delay
+        setTimeout(() => {
+          if (!tunnelState.active) return;
+          if (tunnelState.idx < tunnelState.inputs.length - 1) {
+            tunnelState.idx++;
+            focusTunnelCurrent();
+          }
+        }, 500);
+      } else {
+        // Show interim preview
+        updateTunnelVoicePreview(transcript);
+        // Also live-update the field with interim text
+        if (targetEl.isContentEditable) {
+          targetEl.textContent = (targetEl.dataset.afOriginal || "") + transcript;
+        } else {
+          targetEl.value = (targetEl.dataset.afOriginal || "") + transcript;
+          targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
+    };
+
+    tunnelVoiceRecognition.onstart = () => {
+      // Save original field value so interim updates append correctly
+      const el = tunnelState.inputs[tunnelState.idx];
+      if (el) {
+        el.dataset.afOriginal = el.isContentEditable ? (el.textContent || "") : (el.value || "");
+      }
+    };
+
+    tunnelVoiceRecognition.onend = () => {
+      tunnelVoiceActive = false;
+      tunnelVoiceRecognition = null;
+      updateTunnelMicUI(false);
+      updateTunnelVoicePreview("");
+    };
+
+    tunnelVoiceRecognition.onerror = (event) => {
+      if (event.error === "aborted") return;
+      console.warn(`[Tunnel Voice] Error: ${event.error}`);
+      tunnelVoiceActive = false;
+      tunnelVoiceRecognition = null;
+      updateTunnelMicUI(false);
+      updateTunnelVoicePreview("");
+    };
+
+    try {
+      tunnelVoiceRecognition.start();
+      console.log("[Tunnel Voice] Started listening");
+    } catch (e) {
+      console.warn("[Tunnel Voice] Failed to start:", e);
+      tunnelVoiceActive = false;
+      tunnelVoiceRecognition = null;
+      updateTunnelMicUI(false);
+    }
+  }
+
+  function stopTunnelVoice() {
+    if (tunnelVoiceRecognition) {
+      try { tunnelVoiceRecognition.abort(); } catch (_) {}
+      tunnelVoiceRecognition = null;
+    }
+    tunnelVoiceActive = false;
+    updateTunnelMicUI(false);
+    updateTunnelVoicePreview("");
+  }
+
+  function updateTunnelMicUI(listening) {
+    const btn = document.getElementById("af-mic");
+    if (!btn) return;
+    if (!tunnelVoiceMicEnabled) {
+      btn.style.background = "#e5e7eb";
+      btn.textContent = "Mic Off";
+    } else if (listening) {
+      btn.style.background = "#fee2e2";
+      btn.style.borderColor = "#ef4444";
+      btn.textContent = "🎤 Listening";
+    } else {
+      btn.style.background = "#d1fae5";
+      btn.style.borderColor = "#10b981";
+      btn.textContent = "🎤 Ready";
+    }
+  }
+
+  function updateTunnelVoicePreview(text) {
+    const el = document.getElementById("af-voice-preview");
+    if (!el) return;
+    el.textContent = text ? `"${text}"` : "";
   }
 
   // ========== INTELLIGENT PAGE SIMPLIFICATION ==========
@@ -1799,6 +1968,11 @@
       return;
     }
 
+    // Stop tunnel voice so sidepanel can take over cleanly
+    if (tunnelVoiceActive) {
+      stopTunnelVoice();
+    }
+
     // Stop any previous session
     if (voiceRecognition) {
       try { voiceRecognition.abort(); } catch (_) {}
@@ -2088,6 +2262,7 @@
         return true;
       }
       if (msg?.type === "TUNNEL_OFF") {
+        stopTunnelVoice();
         tunnelState.active = false;
         if (tunnelObserver) {
           tunnelObserver.disconnect();

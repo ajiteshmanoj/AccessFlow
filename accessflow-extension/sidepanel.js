@@ -756,9 +756,35 @@ document.getElementById("send").onclick = async () => {
         'github': 'github.com',
         'reddit': 'reddit.com',
         'twitter': 'twitter.com',
+        'x': 'x.com',
         'facebook': 'facebook.com',
+        'instagram': 'instagram.com',
+        'linkedin': 'linkedin.com',
         'amazon': 'amazon.com',
-        'wikipedia': 'wikipedia.org'
+        'wikipedia': 'wikipedia.org',
+        'netflix': 'netflix.com',
+        'gmail': 'mail.google.com',
+        'email': 'mail.google.com',
+        'mail': 'mail.google.com',
+        'maps': 'maps.google.com',
+        'google maps': 'maps.google.com',
+        'drive': 'drive.google.com',
+        'google drive': 'drive.google.com',
+        'calendar': 'calendar.google.com',
+        'spotify': 'open.spotify.com',
+        'whatsapp': 'web.whatsapp.com',
+        'telegram': 'web.telegram.org',
+        'tiktok': 'tiktok.com',
+        'pinterest': 'pinterest.com',
+        'ebay': 'ebay.com',
+        'stackoverflow': 'stackoverflow.com',
+        'stack overflow': 'stackoverflow.com',
+        'chatgpt': 'chatgpt.com',
+        'claude': 'claude.ai',
+        'news': 'news.google.com',
+        'google news': 'news.google.com',
+        'bbc': 'bbc.com',
+        'cnn': 'cnn.com'
       };
 
       if (shortcuts[url.toLowerCase()]) {
@@ -789,6 +815,36 @@ document.getElementById("send").onclick = async () => {
     }
   }
   // ========== END URL NAVIGATION ==========
+
+  // ========== SEARCH QUERY (works even on restricted pages) ==========
+  const searchMatch = normalized.match(/^(?:search|search for|google|look up|find)\s+(.+)$/i);
+  if (searchMatch) {
+    const query = searchMatch[1].trim();
+    const searchUrl = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+    try {
+      const tab = await getActiveTab();
+      await chrome.tabs.update(tab.id, { url: searchUrl });
+      log(`✓ Searching for "${query}"`);
+      await respond(`Searching for ${query}`);
+      conversationHistory.push({ role: "user", text: cmd });
+      conversationHistory.push({ role: "assistant", text: `Searching for ${query}` });
+      if (conversationHistory.length > 10) conversationHistory = conversationHistory.slice(-10);
+      return;
+    } catch (err) {
+      await respond(`Could not search: ${err.message}`);
+      return;
+    }
+  }
+  // ========== END SEARCH QUERY ==========
+
+  // If on a restricted URL, page commands won't work — inform the user
+  {
+    const tab = await getActiveTab();
+    if (!tab?.id || isRestrictedUrl(tab.url || "")) {
+      await respond('Say "go to" followed by a website name, or "search for" something. Example: "go to youtube" or "search for weather".');
+      return;
+    }
+  }
 
   // Try the built-in command handler first
   const res = await sendToActiveTab({ type: "CMD", cmd });
@@ -1372,6 +1428,8 @@ function stopListening() {
     try { voicePort.disconnect(); } catch (_) {}
     voicePort = null;
   }
+  // Clean up local voice if active
+  stopLocalVoice();
   // Clear status and timer
   const statusEl = document.getElementById("voice-status");
   if (statusEl) statusEl.textContent = "";
@@ -1488,14 +1546,82 @@ function handleVoiceMessage(msg) {
   }
 }
 
+// --- Sidepanel-local voice recognition (for restricted URLs like chrome://newtab) ---
+let localVoiceRecognition = null;
+let isLocalVoiceMode = false;
+
+function startLocalVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    log("Speech recognition not supported in this browser.");
+    return false;
+  }
+
+  localVoiceRecognition = new SpeechRecognition();
+  localVoiceRecognition.continuous = true;
+  localVoiceRecognition.interimResults = true;
+  localVoiceRecognition.lang = "en-US";
+
+  localVoiceRecognition.onresult = (event) => {
+    let transcript = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript;
+    }
+    const isFinal = event.results[event.results.length - 1].isFinal;
+    handleVoiceMessage({ type: "VOICE_RESULT", transcript, isFinal });
+  };
+
+  localVoiceRecognition.onerror = (event) => {
+    if (event.error === "not-allowed") {
+      log("Microphone access denied. Allow mic in browser settings.");
+      stopListening();
+    } else if (event.error !== "no-speech" && event.error !== "aborted") {
+      handleVoiceMessage({ type: "VOICE_ERROR", error: event.error });
+    }
+  };
+
+  localVoiceRecognition.onend = () => {
+    // Auto-restart if still supposed to be listening
+    if (isListening && isLocalVoiceMode) {
+      try { localVoiceRecognition.start(); } catch (_) {}
+    }
+  };
+
+  try {
+    localVoiceRecognition.start();
+    return true;
+  } catch (e) {
+    log("Could not start voice: " + e.message);
+    return false;
+  }
+}
+
+function stopLocalVoice() {
+  if (localVoiceRecognition) {
+    try { localVoiceRecognition.abort(); } catch (_) {}
+    localVoiceRecognition = null;
+  }
+  isLocalVoiceMode = false;
+}
+
 async function startListening() {
   if (isListening) return;
 
   const tab = await getActiveTab();
-  if (!tab?.id || isRestrictedUrl(tab.url || "")) {
-    log("Open a normal https:// website first.");
+  const restricted = !tab?.id || isRestrictedUrl(tab.url || "");
+
+  if (restricted) {
+    // Use sidepanel-local Speech Recognition (no content script needed)
+    if (!startLocalVoice()) return;
+    isLocalVoiceMode = true;
+    isListening = true;
+    micBtn.classList.add("listening");
+    playStartChime();
+    document.getElementById("cmd").value = "";
+    log("🎤 Voice active — say \"go to youtube\" or \"open gmail.com\"");
     return;
   }
+
   await ensureContentScript(tab.id);
 
   try {
@@ -1514,6 +1640,7 @@ async function startListening() {
   });
 
   isListening = true;
+  isLocalVoiceMode = false;
   micBtn.classList.add("listening");
   playStartChime();
   document.getElementById("cmd").value = "";

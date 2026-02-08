@@ -1143,22 +1143,28 @@
       try { tunnelVoiceRecognition.abort(); } catch (_) {}
       tunnelVoiceRecognition = null;
     }
-    // Also stop sidepanel voice so they don't conflict
+    // Kill sidepanel voice and wait for browser to release the mic
+    const needsDelay = !!voiceRecognition;
     if (voiceRecognition) {
       try { voiceRecognition.abort(); } catch (_) {}
       voiceRecognition = null;
     }
 
+    tunnelVoiceActive = true;
+    updateTunnelMicUI(true);
+
+    const doStart = () => {
     const targetEl = tunnelState.inputs[tunnelState.idx];
-    if (!targetEl || !isTextInput(targetEl)) return;
+    if (!targetEl || !isTextInput(targetEl)) {
+      tunnelVoiceActive = false;
+      updateTunnelMicUI(false);
+      return;
+    }
 
     tunnelVoiceRecognition = new SpeechRecognition();
     tunnelVoiceRecognition.continuous = false;
     tunnelVoiceRecognition.interimResults = true;
     tunnelVoiceRecognition.lang = "en-US";
-
-    tunnelVoiceActive = true;
-    updateTunnelMicUI(true);
 
     tunnelVoiceRecognition.onresult = (event) => {
       let transcript = "";
@@ -1287,6 +1293,14 @@
       tunnelVoiceActive = false;
       tunnelVoiceRecognition = null;
       updateTunnelMicUI(false);
+    }
+    }; // end doStart
+
+    // If we just killed sidepanel voice, wait for browser to release the mic
+    if (needsDelay) {
+      setTimeout(doStart, 150);
+    } else {
+      doStart();
     }
   }
 
@@ -2057,6 +2071,8 @@
     let portOpen = true;
 
     voiceRecognition.onresult = (event) => {
+      // If tunnel voice took over, ignore sidepanel results
+      if (tunnelVoiceActive || tunnelState.active) return;
       let transcript = "";
       let isFinal = false;
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -2073,6 +2089,11 @@
       // hiccup, long silence timeout). Restart automatically while the
       // port is still open — the sidepanel controls the real stop via
       // port disconnect.
+      // Do NOT restart if tunnel voice is active — it owns the mic.
+      if (tunnelVoiceActive || tunnelState.active) {
+        voiceRecognition = null;
+        return;
+      }
       if (portOpen && voiceRecognition) {
         try { voiceRecognition.start(); } catch (_) {
           try { port.postMessage({ type: "VOICE_END" }); } catch (_2) {}

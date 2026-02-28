@@ -134,6 +134,40 @@
       </div>
     </div>
 
+    <!-- Accessibility Score -->
+    <div class="section">
+      <h3>📊 Accessibility Score</h3>
+      <div id="score-panel">
+        <div id="score-summary" style="display:none;">
+          <div id="score-ring-container">
+            <svg id="score-ring" viewBox="0 0 120 120" width="120" height="120">
+              <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" stroke-width="10"/>
+              <circle id="score-ring-progress" cx="60" cy="60" r="52" fill="none" stroke="#10b981" stroke-width="10"
+                stroke-dasharray="326.73" stroke-dashoffset="326.73" stroke-linecap="round"
+                transform="rotate(-90 60 60)" style="transition: stroke-dashoffset 1s ease, stroke 0.3s ease;"/>
+              <text id="score-ring-value" x="60" y="55" text-anchor="middle" font-size="28" font-weight="700" fill="#111827">--</text>
+              <text id="score-ring-grade" x="60" y="75" text-anchor="middle" font-size="16" font-weight="600" fill="#64748b">-</text>
+            </svg>
+          </div>
+          <div id="score-scan-info" style="font-size:11px; color:#64748b; text-align:center; margin-top:4px;"></div>
+          <div id="score-categories" style="margin-top:12px;"></div>
+          <div id="score-comparison" style="display:none; margin-top:12px;"></div>
+          <div id="score-issues" style="margin-top:12px;"></div>
+        </div>
+        <div id="score-actions" style="margin-top:10px;">
+          <button id="run-scan" class="primary" style="width:100%;">🔍 Scan Page</button>
+          <div id="score-action-buttons" style="display:none; margin-top:8px;">
+            <div style="display:flex; gap:8px;">
+              <button id="rescan-page" style="flex:1;">🔄 Rescan</button>
+              <button id="ai-summary-btn" style="flex:1;">🤖 AI Summary</button>
+            </div>
+            <button id="export-report" style="width:100%; margin-top:8px;">📋 Copy Report</button>
+          </div>
+        </div>
+        <div id="ai-summary-panel" style="display:none; margin-top:12px; padding:12px; background:var(--soft); border-radius:8px; font-size:13px; line-height:1.6;"></div>
+      </div>
+    </div>
+
     <!-- Profile & Settings (Collapsible) -->
     <div class="section">
       <details>

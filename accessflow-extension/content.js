@@ -2627,6 +2627,548 @@
   }
   // ========== END DYSLEXIA MODE ==========
 
+  // ========== ACCESSIBILITY SCORING ENGINE ==========
+  const AF_ISSUE_HIGHLIGHT_ID = "accessflow-issue-highlight";
+  const AF_ISSUE_TOOLTIP_ID = "accessflow-issue-tooltip";
+  let issueHighlightTimer = null;
+
+  // --- Color helpers ---
+  function parseColor(colorStr) {
+    if (!colorStr || colorStr === "transparent" || colorStr === "rgba(0, 0, 0, 0)") return null;
+    const rgba = colorStr.match(/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)/);
+    if (rgba) {
+      return { r: parseFloat(rgba[1]), g: parseFloat(rgba[2]), b: parseFloat(rgba[3]), a: rgba[4] !== undefined ? parseFloat(rgba[4]) : 1 };
+    }
+    const hex = colorStr.match(/^#([0-9a-f]{3,8})$/i);
+    if (hex) {
+      let h = hex[1];
+      if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+      if (h.length === 4) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2]+h[3]+h[3];
+      const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+      const a = h.length === 8 ? parseInt(h.slice(6,8),16)/255 : 1;
+      return { r, g, b, a };
+    }
+    // Named colors fallback - create a temporary element
+    const tmp = document.createElement("div");
+    tmp.style.color = colorStr;
+    tmp.style.display = "none";
+    document.body.appendChild(tmp);
+    const computed = getComputedStyle(tmp).color;
+    tmp.remove();
+    if (computed !== colorStr) return parseColor(computed);
+    return null;
+  }
+
+  function getEffectiveBackground(el) {
+    let node = el;
+    while (node && node !== document.documentElement) {
+      const style = getComputedStyle(node);
+      const bg = parseColor(style.backgroundColor);
+      if (bg && bg.a > 0.01) {
+        // Blend with white if semi-transparent
+        if (bg.a < 1) {
+          return { r: bg.r * bg.a + 255 * (1 - bg.a), g: bg.g * bg.a + 255 * (1 - bg.a), b: bg.b * bg.a + 255 * (1 - bg.a), a: 1 };
+        }
+        return bg;
+      }
+      node = node.parentElement;
+    }
+    return { r: 255, g: 255, b: 255, a: 1 }; // Default white
+  }
+
+  function relativeLuminance(c) {
+    const srgb = [c.r / 255, c.g / 255, c.b / 255].map(v =>
+      v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    );
+    return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+  }
+
+  function contrastRatio(c1, c2) {
+    const l1 = relativeLuminance(c1);
+    const l2 = relativeLuminance(c2);
+    const lighter = Math.max(l1, l2);
+    const darker = Math.min(l1, l2);
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  function getCSSSelector(el) {
+    if (el.id) return `#${el.id}`;
+    const tag = el.tagName.toLowerCase();
+    const cls = Array.from(el.classList).slice(0, 2).join(".");
+    const parent = el.parentElement;
+    if (!parent) return tag;
+    const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+    const idx = siblings.indexOf(el);
+    const suffix = siblings.length > 1 ? `:nth-of-type(${idx + 1})` : "";
+    const parentSel = parent === document.body ? "body" : (parent.id ? `#${parent.id}` : parent.tagName.toLowerCase());
+    return `${parentSel} > ${tag}${cls ? "." + cls : ""}${suffix}`;
+  }
+
+  // --- Scoring categories ---
+
+  function checkContrast() {
+    const textSelectors = "p, span, div, a, li, td, th, h1, h2, h3, h4, h5, h6, label, button, blockquote, figcaption, dt, dd";
+    const elements = document.querySelectorAll(textSelectors);
+    let passing = 0, total = 0;
+    const issues = [];
+    let scanned = 0;
+
+    for (const el of elements) {
+      if (scanned >= 500) break; // Performance cap
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const text = (el.textContent || "").trim();
+      if (text.length === 0) continue;
+      // Skip elements whose text comes entirely from children (avoid double-counting)
+      const directText = Array.from(el.childNodes).some(n => n.nodeType === 3 && n.textContent.trim().length > 0);
+      if (!directText && el.children.length > 0) continue;
+
+      total++;
+      scanned++;
+      const style = getComputedStyle(el);
+      const fg = parseColor(style.color);
+      if (!fg) { passing++; continue; }
+      const bg = getEffectiveBackground(el);
+
+      const ratio = contrastRatio(fg, bg);
+      const fontSize = parseFloat(style.fontSize);
+      const fontWeight = parseInt(style.fontWeight) || 400;
+      const isLarge = fontSize >= 18 || (fontSize >= 14 && fontWeight >= 700);
+      const required = isLarge ? 3 : 4.5;
+
+      if (ratio >= required) {
+        passing++;
+      } else {
+        issues.push({
+          element: getCSSSelector(el),
+          issue: `Contrast ratio ${ratio.toFixed(2)}:1 (need ${required}:1) — "${text.slice(0, 40)}"`,
+          severity: ratio < 2 ? "critical" : "major",
+          wcagCriterion: "1.4.3",
+          _el: el
+        });
+      }
+    }
+
+    return {
+      score: total > 0 ? Math.round((passing / total) * 100) : 100,
+      weight: 25,
+      passingCount: passing,
+      totalCount: total,
+      issues
+    };
+  }
+
+  function checkAltText() {
+    const images = document.querySelectorAll("img");
+    let passing = 0, total = 0;
+    const issues = [];
+
+    for (const img of images) {
+      const rect = img.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) continue; // Skip tiny/invisible images
+      if (img.getAttribute("role") === "presentation" || img.getAttribute("aria-hidden") === "true") continue; // Decorative
+
+      total++;
+      const alt = img.getAttribute("alt");
+      const inLink = !!img.closest("a, button");
+
+      if (alt === null) {
+        issues.push({
+          element: getCSSSelector(img),
+          issue: `Image missing alt attribute — src: "${(img.src || "").slice(-50)}"`,
+          severity: "critical",
+          wcagCriterion: "1.1.1",
+          _el: img
+        });
+      } else if (alt === "" && inLink) {
+        issues.push({
+          element: getCSSSelector(img),
+          issue: `Image inside link/button has empty alt="" — needs descriptive text`,
+          severity: "major",
+          wcagCriterion: "1.1.1",
+          _el: img
+        });
+      } else if (/\.(jpg|jpeg|png|gif|svg|webp|bmp|ico)/i.test(alt)) {
+        issues.push({
+          element: getCSSSelector(img),
+          issue: `Alt text appears to be a filename: "${alt}"`,
+          severity: "major",
+          wcagCriterion: "1.1.1",
+          _el: img
+        });
+      } else {
+        passing++;
+      }
+    }
+
+    return {
+      score: total > 0 ? Math.round((passing / total) * 100) : 100,
+      weight: 20,
+      passingCount: passing,
+      totalCount: total,
+      issues
+    };
+  }
+
+  function checkTapTargets() {
+    const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [onclick]';
+    const elements = document.querySelectorAll(selectors);
+    let passing = 0, total = 0;
+    const issues = [];
+
+    for (const el of elements) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue; // Hidden
+      if (rect.top > document.documentElement.scrollHeight) continue; // Off-page
+
+      total++;
+      const minDim = 24; // WCAG 2.2 AA minimum
+      if (rect.width >= minDim && rect.height >= minDim) {
+        passing++;
+      } else {
+        const text = extractBestText(el).slice(0, 40);
+        issues.push({
+          element: getCSSSelector(el),
+          issue: `Target size ${Math.round(rect.width)}x${Math.round(rect.height)}px (need ${minDim}x${minDim}px) — "${text}"`,
+          severity: (rect.width < 16 || rect.height < 16) ? "critical" : "minor",
+          wcagCriterion: "2.5.8",
+          _el: el
+        });
+      }
+    }
+
+    return {
+      score: total > 0 ? Math.round((passing / total) * 100) : 100,
+      weight: 15,
+      passingCount: passing,
+      totalCount: total,
+      issues
+    };
+  }
+
+  function checkHeadings() {
+    const headings = document.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    let score = 100;
+    const deductions = [];
+
+    const levels = Array.from(headings).map(h => parseInt(h.tagName[1]));
+    const h1Count = levels.filter(l => l === 1).length;
+
+    if (h1Count === 0) {
+      score -= 25;
+      deductions.push({ issue: "No <h1> element found on page", severity: "major", wcagCriterion: "1.3.1" });
+    } else if (h1Count > 1) {
+      score -= 10;
+      deductions.push({ issue: `Multiple <h1> elements found (${h1Count})`, severity: "minor", wcagCriterion: "1.3.1" });
+    }
+
+    for (let i = 1; i < levels.length; i++) {
+      if (levels[i] > levels[i - 1] + 1) {
+        score -= 15;
+        deductions.push({
+          issue: `Heading level skipped: <h${levels[i - 1]}> to <h${levels[i]}>`,
+          severity: "minor",
+          wcagCriterion: "1.3.1"
+        });
+      }
+    }
+
+    return {
+      score: Math.max(0, score),
+      weight: 10,
+      deductions
+    };
+  }
+
+  function checkFormLabels() {
+    const fields = document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="reset"]), select, textarea');
+    let passing = 0, total = 0;
+    const issues = [];
+
+    for (const field of fields) {
+      const rect = field.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+
+      total++;
+      const id = field.id;
+      const hasLabelFor = id && document.querySelector(`label[for="${id}"]`);
+      const wrappedInLabel = !!field.closest("label");
+      const hasAriaLabel = field.hasAttribute("aria-label") && field.getAttribute("aria-label").trim().length > 0;
+      const hasAriaLabelledBy = field.hasAttribute("aria-labelledby");
+      const hasPlaceholder = field.hasAttribute("placeholder") && field.getAttribute("placeholder").trim().length > 0;
+
+      if (hasLabelFor || wrappedInLabel || hasAriaLabel || hasAriaLabelledBy) {
+        passing++;
+      } else if (hasPlaceholder) {
+        issues.push({
+          element: getCSSSelector(field),
+          issue: `Field uses only placeholder as label: "${field.getAttribute("placeholder")}" — placeholder is not a label substitute`,
+          severity: "minor",
+          wcagCriterion: "1.3.1",
+          _el: field
+        });
+      } else {
+        const name = field.getAttribute("name") || field.getAttribute("type") || "unknown";
+        issues.push({
+          element: getCSSSelector(field),
+          issue: `Form field "${name}" has no associated label`,
+          severity: "major",
+          wcagCriterion: "1.3.1",
+          _el: field
+        });
+      }
+    }
+
+    return {
+      score: total > 0 ? Math.round((passing / total) * 100) : 100,
+      weight: 15,
+      passingCount: passing,
+      totalCount: total,
+      issues
+    };
+  }
+
+  function checkAria() {
+    let score = 100;
+    const issues = [];
+    const totalChecks = { count: 0 };
+
+    // Check for main landmark
+    const hasMain = !!document.querySelector('main, [role="main"]');
+    if (!hasMain) {
+      totalChecks.count++;
+      score -= 15;
+      issues.push({ element: "page", issue: 'No <main> or role="main" landmark found', severity: "major", wcagCriterion: "1.3.1" });
+    }
+
+    // Check interactive divs/spans without proper roles
+    const clickables = document.querySelectorAll("div[onclick], span[onclick]");
+    for (const el of clickables) {
+      totalChecks.count++;
+      if (!el.getAttribute("role") && !el.hasAttribute("tabindex")) {
+        issues.push({
+          element: getCSSSelector(el),
+          issue: `Clickable <${el.tagName.toLowerCase()}> has no role or tabindex`,
+          severity: "major",
+          wcagCriterion: "4.1.2",
+          _el: el
+        });
+        score -= 5;
+      }
+    }
+
+    // Check aria-hidden with focusable children
+    const hiddenEls = document.querySelectorAll('[aria-hidden="true"]');
+    for (const el of hiddenEls) {
+      const focusable = el.querySelector('a, button, input, select, textarea, [tabindex]');
+      if (focusable) {
+        totalChecks.count++;
+        issues.push({
+          element: getCSSSelector(el),
+          issue: 'aria-hidden="true" contains focusable children',
+          severity: "critical",
+          wcagCriterion: "4.1.2",
+          _el: el
+        });
+        score -= 10;
+      }
+    }
+
+    // Check buttons/links without accessible names
+    const interactives = document.querySelectorAll("a, button, [role='button'], [role='link']");
+    let noNameCount = 0;
+    for (const el of interactives) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      totalChecks.count++;
+      const text = (el.textContent || "").trim();
+      const ariaLabel = (el.getAttribute("aria-label") || "").trim();
+      const ariaLabelledBy = el.getAttribute("aria-labelledby");
+      const title = (el.getAttribute("title") || "").trim();
+      const imgAlt = el.querySelector("img[alt]")?.getAttribute("alt")?.trim();
+      if (!text && !ariaLabel && !ariaLabelledBy && !title && !imgAlt) {
+        noNameCount++;
+        if (noNameCount <= 10) { // Cap issue reporting
+          issues.push({
+            element: getCSSSelector(el),
+            issue: `<${el.tagName.toLowerCase()}> has no accessible name`,
+            severity: "critical",
+            wcagCriterion: "4.1.2",
+            _el: el
+          });
+        }
+        score -= 3;
+      }
+    }
+
+    return {
+      score: Math.max(0, Math.min(100, score)),
+      weight: 10,
+      issues
+    };
+  }
+
+  function checkKeyboard() {
+    let score = 100;
+    const issues = [];
+
+    // Check for positive tabindex
+    const positiveTabindex = document.querySelectorAll("[tabindex]");
+    for (const el of positiveTabindex) {
+      const val = parseInt(el.getAttribute("tabindex"));
+      if (val > 0) {
+        issues.push({
+          element: getCSSSelector(el),
+          issue: `tabindex="${val}" disrupts natural tab order`,
+          severity: "minor",
+          wcagCriterion: "2.4.3",
+          _el: el
+        });
+        score -= 5;
+      }
+    }
+
+    // Check click handlers on non-focusable elements
+    const onclickEls = document.querySelectorAll("[onclick]");
+    for (const el of onclickEls) {
+      const tag = el.tagName.toLowerCase();
+      if (["a", "button", "input", "select", "textarea"].includes(tag)) continue;
+      if (el.hasAttribute("tabindex")) continue;
+      if (el.getAttribute("role")) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+
+      issues.push({
+        element: getCSSSelector(el),
+        issue: `<${tag}> with onclick handler is not keyboard-focusable`,
+        severity: "major",
+        wcagCriterion: "2.1.1",
+        _el: el
+      });
+      score -= 5;
+    }
+
+    // Check important interactive elements with tabindex="-1"
+    const negTabindex = document.querySelectorAll('main [tabindex="-1"], article [tabindex="-1"], [role="main"] [tabindex="-1"]');
+    for (const el of negTabindex) {
+      const tag = el.tagName.toLowerCase();
+      if (["a", "button", "input"].includes(tag) || el.getAttribute("role") === "button") {
+        issues.push({
+          element: getCSSSelector(el),
+          issue: `Interactive <${tag}> in main content has tabindex="-1" (removed from tab order)`,
+          severity: "minor",
+          wcagCriterion: "2.1.1",
+          _el: el
+        });
+        score -= 3;
+      }
+    }
+
+    return {
+      score: Math.max(0, Math.min(100, score)),
+      weight: 5,
+      issues
+    };
+  }
+
+  function runAccessibilityScan() {
+    const startTime = performance.now();
+
+    const contrast = checkContrast();
+    const altText = checkAltText();
+    const tapTargets = checkTapTargets();
+    const headings = checkHeadings();
+    const formLabels = checkFormLabels();
+    const aria = checkAria();
+    const keyboard = checkKeyboard();
+
+    const categories = { contrast, altText, tapTargets, headings, formLabels, aria, keyboard };
+
+    // Weighted average
+    const totalWeight = Object.values(categories).reduce((s, c) => s + c.weight, 0);
+    const weightedSum = Object.values(categories).reduce((s, c) => s + c.score * c.weight, 0);
+    const overallScore = Math.round(weightedSum / totalWeight);
+
+    let grade;
+    if (overallScore >= 90) grade = "A";
+    else if (overallScore >= 80) grade = "B";
+    else if (overallScore >= 70) grade = "C";
+    else if (overallScore >= 60) grade = "D";
+    else grade = "F";
+
+    const scanDurationMs = Math.round(performance.now() - startTime);
+
+    // Strip _el references before sending (can't serialize DOM elements)
+    const cleanCategories = {};
+    for (const [key, cat] of Object.entries(categories)) {
+      const clean = { ...cat };
+      if (clean.issues) {
+        clean.issues = clean.issues.map(({ _el, ...rest }) => rest);
+      }
+      if (clean.deductions) {
+        clean.deductions = clean.deductions.map(({ _el, ...rest }) => rest);
+      }
+      cleanCategories[key] = clean;
+    }
+
+    return {
+      timestamp: new Date().toISOString(),
+      url: window.location.href,
+      overallScore,
+      grade,
+      categories: cleanCategories,
+      elementCount: document.querySelectorAll("*").length,
+      scanDurationMs
+    };
+  }
+
+  function highlightAccessibilityIssue(selector, issueText) {
+    // Remove previous highlight
+    clearAccessibilityHighlight();
+
+    let el;
+    try { el = document.querySelector(selector); } catch (_) {}
+    if (!el) return;
+
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    // Add highlight outline
+    const overlay = document.createElement("div");
+    overlay.id = AF_ISSUE_HIGHLIGHT_ID;
+    const rect = el.getBoundingClientRect();
+    overlay.style.cssText = `
+      position: fixed; top: ${rect.top - 4}px; left: ${rect.left - 4}px;
+      width: ${rect.width + 8}px; height: ${rect.height + 8}px;
+      border: 3px dashed #ef4444; background: rgba(239, 68, 68, 0.1);
+      border-radius: 4px; z-index: 2147483646; pointer-events: none;
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2);
+    `;
+    document.body.appendChild(overlay);
+
+    // Add tooltip
+    const tooltip = document.createElement("div");
+    tooltip.id = AF_ISSUE_TOOLTIP_ID;
+    tooltip.style.cssText = `
+      position: fixed; z-index: 2147483647; background: #1f2937; color: #fff;
+      padding: 8px 12px; border-radius: 8px; font-size: 12px; max-width: 320px;
+      font-family: system-ui, sans-serif; line-height: 1.4; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      left: ${Math.min(rect.left, window.innerWidth - 340)}px;
+      top: ${rect.bottom + 10}px;
+    `;
+    tooltip.textContent = issueText;
+    document.body.appendChild(tooltip);
+
+    // Auto-remove after 5 seconds
+    issueHighlightTimer = setTimeout(clearAccessibilityHighlight, 5000);
+  }
+
+  function clearAccessibilityHighlight() {
+    if (issueHighlightTimer) { clearTimeout(issueHighlightTimer); issueHighlightTimer = null; }
+    document.getElementById(AF_ISSUE_HIGHLIGHT_ID)?.remove();
+    document.getElementById(AF_ISSUE_TOOLTIP_ID)?.remove();
+  }
+  // ========== END ACCESSIBILITY SCORING ENGINE ==========
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg?.type === "PING") {
@@ -2852,6 +3394,22 @@
       if (msg?.type === "GET_FULL_SECTIONS") {
         const sections = getFullPageSections();
         sendResponse({ ok: true, sections, page_title: document.title, page_url: window.location.href });
+        return true;
+      }
+      // ========== ACCESSIBILITY SCORING HANDLERS ==========
+      if (msg?.type === "RUN_ACCESSIBILITY_SCAN") {
+        const report = runAccessibilityScan();
+        sendResponse({ ok: true, report });
+        return true;
+      }
+      if (msg?.type === "HIGHLIGHT_ISSUE") {
+        highlightAccessibilityIssue(msg.selector, msg.issue);
+        sendResponse({ ok: true });
+        return true;
+      }
+      if (msg?.type === "CLEAR_ISSUE_HIGHLIGHT") {
+        clearAccessibilityHighlight();
+        sendResponse({ ok: true });
         return true;
       }
       if (msg?.type === "ANALYZE_PAGE") {

@@ -546,6 +546,9 @@ const PANEL_COMMANDS = {
   "read page":       "narrate-page",
   "read aloud":      "narrate-page",
   "narrate":         "narrate-page",
+  "scan page":       "run-scan",
+  "accessibility score": "run-scan",
+  "check accessibility": "run-scan",
 };
 
 // Track whether the current command was voice-initiated
@@ -636,7 +639,8 @@ document.getElementById("send").onclick = async () => {
     'bigger text': ['bigger text', 'increase text', 'larger font', 'make text bigger'],
     'smaller text': ['smaller text', 'decrease text', 'smaller font', 'make text smaller'],
     'go to website': ['go to', 'open', 'visit', 'navigate to'],
-    'help': ['help', 'what can i say', 'commands', 'show commands']
+    'help': ['help', 'what can i say', 'commands', 'show commands'],
+    'accessibility score': ['accessibility score', 'scan page', 'check accessibility', 'score this page', 'a11y score']
   };
 
   // Find matching extension command
@@ -715,6 +719,11 @@ document.getElementById("send").onclick = async () => {
           break;
         case 'help':
           message = "You can say: inclusive mode, focus mode, task tunnel, read page, describe images, finger tracking, bigger text, smaller text, go to [website], or any webpage command like 'click login' or 'search for shoes'";
+          executed = true;
+          break;
+        case 'accessibility score':
+          document.getElementById("run-scan").click();
+          message = "Scanning page accessibility";
           executed = true;
           break;
       }
@@ -1967,6 +1976,303 @@ document.getElementById("clear-profile").onclick = () => {
 
 // Initial hint
 log("Tip: Press Ctrl+Shift+V anytime to toggle voice input, or click the mic button.");
+
+// ========== ACCESSIBILITY SCORING ==========
+let beforeReport = null;
+let latestReport = null;
+
+function getScoreColor(score) {
+  if (score >= 90) return "#10b981";
+  if (score >= 80) return "#22c55e";
+  if (score >= 70) return "#eab308";
+  if (score >= 60) return "#f97316";
+  return "#ef4444";
+}
+
+function renderScoreRing(score, grade) {
+  const circumference = 2 * Math.PI * 52; // r=52
+  const offset = circumference - (score / 100) * circumference;
+  const color = getScoreColor(score);
+
+  const progress = document.getElementById("score-ring-progress");
+  const value = document.getElementById("score-ring-value");
+  const gradeEl = document.getElementById("score-ring-grade");
+
+  progress.style.strokeDashoffset = offset;
+  progress.style.stroke = color;
+  value.textContent = score;
+  value.setAttribute("fill", color);
+  gradeEl.textContent = grade;
+}
+
+const CATEGORY_LABELS = {
+  contrast: "Contrast",
+  altText: "Image Alt Text",
+  tapTargets: "Tap Targets",
+  headings: "Heading Hierarchy",
+  formLabels: "Form Labels",
+  aria: "ARIA & Semantics",
+  keyboard: "Keyboard"
+};
+
+function renderCategories(categories) {
+  const container = document.getElementById("score-categories");
+  container.innerHTML = "";
+
+  for (const [key, cat] of Object.entries(categories)) {
+    const label = CATEGORY_LABELS[key] || key;
+    const color = getScoreColor(cat.score);
+    const issueCount = (cat.issues || cat.deductions || []).length;
+
+    const div = document.createElement("div");
+    div.className = "score-category";
+    div.innerHTML = `
+      <div class="score-cat-header">
+        <span>${label}</span>
+        <span class="score-cat-value" style="color:${color}">${cat.score}%</span>
+      </div>
+      <div class="score-bar">
+        <div class="score-bar-fill" style="width:${cat.score}%; background:${color};"></div>
+      </div>
+    `;
+    container.appendChild(div);
+  }
+}
+
+function renderIssues(categories) {
+  const container = document.getElementById("score-issues");
+  container.innerHTML = "";
+
+  for (const [key, cat] of Object.entries(categories)) {
+    const issues = cat.issues || cat.deductions || [];
+    if (issues.length === 0) continue;
+
+    const label = CATEGORY_LABELS[key] || key;
+    const section = document.createElement("div");
+    section.className = "score-issues-section";
+
+    const header = document.createElement("button");
+    header.className = "score-issues-header";
+    header.innerHTML = `<span>${label}</span><span>${issues.length} issue${issues.length > 1 ? "s" : ""}</span>`;
+
+    const list = document.createElement("div");
+    list.className = "score-issues-list";
+
+    for (const issue of issues) {
+      const item = document.createElement("div");
+      item.className = "score-issue-item";
+
+      const text = document.createElement("div");
+      text.className = "score-issue-text";
+      text.textContent = issue.issue;
+
+      const badges = document.createElement("div");
+      badges.style.cssText = "display:flex; gap:4px; align-items:center; flex-shrink:0;";
+
+      if (issue.severity) {
+        const badge = document.createElement("span");
+        badge.className = `score-issue-badge ${issue.severity}`;
+        badge.textContent = issue.severity;
+        badges.appendChild(badge);
+      }
+
+      if (issue.element && issue.element !== "page") {
+        const btn = document.createElement("button");
+        btn.className = "score-highlight-btn";
+        btn.textContent = "Show";
+        btn.onclick = () => {
+          sendToActiveTab({ type: "HIGHLIGHT_ISSUE", selector: issue.element, issue: issue.issue });
+        };
+        badges.appendChild(btn);
+      }
+
+      item.appendChild(text);
+      item.appendChild(badges);
+      list.appendChild(item);
+    }
+
+    header.onclick = () => {
+      list.classList.toggle("open");
+    };
+
+    section.appendChild(header);
+    section.appendChild(list);
+    container.appendChild(section);
+  }
+}
+
+function renderComparison(before, after) {
+  const container = document.getElementById("score-comparison");
+  if (!before || !after) { container.style.display = "none"; return; }
+
+  container.style.display = "block";
+  container.innerHTML = "<div style='font-size:12px; font-weight:700; margin-bottom:8px;'>Before / After Comparison</div>";
+
+  // Overall
+  const overallDelta = after.overallScore - before.overallScore;
+  const overallRow = document.createElement("div");
+  overallRow.className = "score-comparison-row";
+  overallRow.style.fontWeight = "700";
+  overallRow.innerHTML = `
+    <span>Overall</span>
+    <span>${before.overallScore} → ${after.overallScore}
+      <span class="score-delta ${overallDelta > 0 ? "positive" : overallDelta < 0 ? "negative" : "neutral"}">
+        ${overallDelta > 0 ? "+" : ""}${overallDelta}
+      </span>
+    </span>
+  `;
+  container.appendChild(overallRow);
+
+  // Per category
+  for (const key of Object.keys(after.categories)) {
+    const beforeCat = before.categories[key];
+    const afterCat = after.categories[key];
+    if (!beforeCat) continue;
+    const delta = afterCat.score - beforeCat.score;
+    const row = document.createElement("div");
+    row.className = "score-comparison-row";
+    row.innerHTML = `
+      <span>${CATEGORY_LABELS[key] || key}</span>
+      <span>${beforeCat.score}% → ${afterCat.score}%
+        <span class="score-delta ${delta > 0 ? "positive" : delta < 0 ? "negative" : "neutral"}">
+          ${delta > 0 ? "+" : ""}${delta}
+        </span>
+      </span>
+    `;
+    container.appendChild(row);
+  }
+
+  // Issues fixed count
+  const beforeIssues = Object.values(before.categories).reduce((s, c) => s + (c.issues || c.deductions || []).length, 0);
+  const afterIssues = Object.values(after.categories).reduce((s, c) => s + (c.issues || c.deductions || []).length, 0);
+  const fixed = beforeIssues - afterIssues;
+  if (fixed !== 0) {
+    const fixedRow = document.createElement("div");
+    fixedRow.className = "score-comparison-row";
+    fixedRow.innerHTML = `
+      <span>Issues</span>
+      <span class="score-delta ${fixed > 0 ? "positive" : "negative"}">
+        ${fixed > 0 ? fixed + " fixed" : Math.abs(fixed) + " new"}
+      </span>
+    `;
+    container.appendChild(fixedRow);
+  }
+}
+
+function displayReport(report, isRescan) {
+  latestReport = report;
+
+  document.getElementById("score-summary").style.display = "block";
+  document.getElementById("score-action-buttons").style.display = "block";
+
+  renderScoreRing(report.overallScore, report.grade);
+  renderCategories(report.categories);
+  renderIssues(report.categories);
+
+  const scanInfo = document.getElementById("score-scan-info");
+  scanInfo.textContent = `Scanned ${report.elementCount} elements in ${report.scanDurationMs}ms`;
+
+  if (isRescan && beforeReport) {
+    renderComparison(beforeReport, report);
+  }
+}
+
+document.getElementById("run-scan").onclick = async () => {
+  const btn = document.getElementById("run-scan");
+  btn.textContent = "Scanning...";
+  btn.disabled = true;
+
+  const res = await sendToActiveTab({ type: "RUN_ACCESSIBILITY_SCAN" });
+
+  btn.textContent = "🔍 Scan Page";
+  btn.disabled = false;
+
+  if (res?.ok && res.report) {
+    beforeReport = res.report;
+    displayReport(res.report, false);
+    log(`Accessibility Score: ${res.report.overallScore}/100 (${res.report.grade})`);
+  } else {
+    log("Could not scan page: " + (res?.message || "Unknown error"));
+  }
+};
+
+document.getElementById("rescan-page").onclick = async () => {
+  const btn = document.getElementById("rescan-page");
+  btn.textContent = "Scanning...";
+  btn.disabled = true;
+
+  const res = await sendToActiveTab({ type: "RUN_ACCESSIBILITY_SCAN" });
+
+  btn.textContent = "🔄 Rescan";
+  btn.disabled = false;
+
+  if (res?.ok && res.report) {
+    displayReport(res.report, true);
+    const delta = res.report.overallScore - (beforeReport?.overallScore || 0);
+    log(`Rescan: ${res.report.overallScore}/100 (${delta >= 0 ? "+" : ""}${delta})`);
+  } else {
+    log("Rescan failed: " + (res?.message || "Unknown error"));
+  }
+};
+
+document.getElementById("export-report").onclick = () => {
+  if (!latestReport) { log("No report to export. Run a scan first."); return; }
+
+  const text = [
+    `AccessFlow Accessibility Report`,
+    `URL: ${latestReport.url}`,
+    `Date: ${latestReport.timestamp}`,
+    `Score: ${latestReport.overallScore}/100 (${latestReport.grade})`,
+    ``,
+    `Category Breakdown:`,
+    ...Object.entries(latestReport.categories).map(([key, cat]) =>
+      `  ${CATEGORY_LABELS[key] || key}: ${cat.score}%`
+    ),
+    ``,
+    `Issues:`,
+    ...Object.entries(latestReport.categories).flatMap(([key, cat]) =>
+      (cat.issues || cat.deductions || []).map(i =>
+        `  [${(i.severity || "info").toUpperCase()}] ${CATEGORY_LABELS[key]}: ${i.issue}`
+      )
+    ),
+    ``,
+    `Scanned ${latestReport.elementCount} elements in ${latestReport.scanDurationMs}ms`
+  ].join("\n");
+
+  navigator.clipboard.writeText(text).then(() => {
+    log("Report copied to clipboard!");
+  }).catch(() => {
+    log("Could not copy — check clipboard permissions.");
+  });
+};
+
+document.getElementById("ai-summary-btn").onclick = async () => {
+  if (!latestReport) { log("No report to summarize. Run a scan first."); return; }
+
+  const btn = document.getElementById("ai-summary-btn");
+  const panel = document.getElementById("ai-summary-panel");
+  btn.textContent = "Thinking...";
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`${BACKEND}/api/accessibility-summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report: latestReport })
+    });
+    if (!res.ok) throw new Error(`API returned ${res.status}`);
+    const data = await res.json();
+    panel.style.display = "block";
+    panel.textContent = data.summary;
+  } catch (e) {
+    panel.style.display = "block";
+    panel.textContent = "Could not generate AI summary: " + e.message;
+  }
+
+  btn.textContent = "🤖 AI Summary";
+  btn.disabled = false;
+};
+// ========== END ACCESSIBILITY SCORING ==========
 
 // ========== CLEANUP ON SIDEPANEL CLOSE ==========
 // Reset page modifications when sidepanel is closed

@@ -809,6 +809,173 @@ input:focus-visible {
   opacity: 0.8;
 }
 
+/* ========== Accessibility Score Panel ========== */
+#score-ring-container {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.score-category {
+  margin-bottom: 8px;
+}
+
+.score-cat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: var(--fg);
+}
+
+.score-cat-value {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.score-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.8s ease, background-color 0.3s ease;
+}
+
+.score-issues-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.score-issues-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--soft);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  width: 100%;
+  text-align: left;
+  transition: background 0.2s ease;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.score-issues-header:hover {
+  background: var(--border);
+  transform: none;
+  box-shadow: none;
+}
+
+.score-issues-list {
+  display: none;
+  padding: 0;
+}
+
+.score-issues-list.open {
+  display: block;
+}
+
+.score-issue-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.4;
+  gap: 8px;
+}
+
+.score-issue-text {
+  flex: 1;
+  color: var(--fg);
+}
+
+.score-issue-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.score-issue-badge.critical {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.score-issue-badge.major {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.score-issue-badge.minor {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.score-highlight-btn {
+  padding: 2px 8px !important;
+  font-size: 10px !important;
+  min-height: unset !important;
+  min-width: unset !important;
+  border-radius: 6px !important;
+  flex-shrink: 0;
+  border: 1px solid var(--border) !important;
+  background: white !important;
+  box-shadow: none !important;
+}
+
+.score-highlight-btn:hover {
+  background: var(--soft) !important;
+  transform: none !important;
+}
+
+.score-comparison-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.score-comparison-row:last-child {
+  border-bottom: none;
+}
+
+.score-delta {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.score-delta.positive {
+  color: var(--success);
+}
+
+.score-delta.negative {
+  color: var(--danger);
+}
+
+.score-delta.neutral {
+  color: var(--muted);
+}
+
 /* Tighter grid spacing */
 .section .grid {
   gap: 8px;

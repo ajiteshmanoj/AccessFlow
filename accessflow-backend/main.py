@@ -1008,6 +1008,69 @@ async def text_to_speech(request: TTSRequest):
         raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
 
 
+# ========== ACCESSIBILITY SUMMARY ENDPOINT ==========
+
+class AccessibilitySummaryRequest(BaseModel):
+    report: Dict[str, Any]
+
+
+class AccessibilitySummaryResponse(BaseModel):
+    summary: str
+
+
+@app.post("/api/accessibility-summary", response_model=AccessibilitySummaryResponse)
+async def accessibility_summary(request: AccessibilitySummaryRequest):
+    """
+    Generate a conversational AI summary of an accessibility scan report.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+
+    report = request.report
+    categories = report.get("categories", {})
+
+    # Build a concise summary of findings for the LLM
+    findings = []
+    for key, cat in categories.items():
+        issues = cat.get("issues", cat.get("deductions", []))
+        findings.append(f"- {key}: {cat.get('score', 0)}% ({len(issues)} issues)")
+
+    prompt = (
+        f"You are an accessibility expert reviewing a webpage scan.\n\n"
+        f"Page: {report.get('url', 'unknown')}\n"
+        f"Overall Score: {report.get('overallScore', 0)}/100 (Grade: {report.get('grade', '-')})\n\n"
+        f"Category scores:\n" + "\n".join(findings) + "\n\n"
+        f"Top issues found:\n"
+    )
+
+    # Add top 8 issues
+    all_issues = []
+    for cat in categories.values():
+        for issue in cat.get("issues", cat.get("deductions", []))[:3]:
+            all_issues.append(f"  [{issue.get('severity', 'info')}] {issue.get('issue', '')}")
+    prompt += "\n".join(all_issues[:8])
+
+    prompt += (
+        "\n\nProvide a 3-4 sentence summary of the accessibility state of this page. "
+        "Then give the top 3 specific, actionable recommendations to improve the score. "
+        "Be conversational and practical — avoid jargon. Keep it under 150 words."
+    )
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=250,
+            temperature=0.4
+        )
+        summary = response.choices[0].message.content.strip()
+        return AccessibilitySummaryResponse(summary=summary)
+    except Exception as e:
+        return AccessibilitySummaryResponse(summary=f"Could not generate summary: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

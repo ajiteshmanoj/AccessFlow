@@ -2,118 +2,112 @@
 
 **AI-Powered Adaptive Accessibility Companion**
 
-> Make any website accessible through voice, gestures, and AI — no developer changes required.
+> Make any website accessible — no developer changes required.
 
-AccessFlow is a Chrome extension that brings real-time accessibility to **any website** for users with visual, motor, cognitive, or auditory impairments. It combines voice control, hand gesture tracking, AI-powered page adaptation, and color vision support into a single unified tool.
+[![Python](https://img.shields.io/badge/Python-3.8+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![JavaScript](https://img.shields.io/badge/JavaScript-ES6+-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
+[![Chrome Extension](https://img.shields.io/badge/Chrome-Manifest_V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![GPT-4o-mini](https://img.shields.io/badge/GPT--4o--mini-412991?logo=openai&logoColor=white)](https://openai.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Problem
+> **Demo screenshots/GIF coming soon**
 
-Despite rapid digital innovation, most websites remain inaccessible due to rigid one-size-fits-all designs, complex interfaces, and a lack of multimodal alternatives. Users with disabilities are forced to rely on fragmented, developer-dependent tools that rarely work across platforms. AccessFlow solves this by injecting accessibility features directly into any webpage at runtime.
+---
+
+## The Problem
+
+Over **1 billion people** worldwide live with some form of disability, yet the vast majority of websites fail basic WCAG compliance. Accessibility fixes are developer-dependent — users shouldn't have to wait for site owners to retrofit their pages.
+
+## The Solution
+
+AccessFlow is a Chrome extension that **injects accessibility features directly into any webpage at runtime**. Powered by GPT-4o-mini, it combines voice control, hand gesture tracking, AI-powered page adaptation, and visual accessibility tools into a single companion — no source code changes required.
+
+---
 
 ## Features
 
-### Voice Control
-- **Natural language commands**: Say "click login", "search for shoes", "scroll down", or "go back"
-- **AI command interpretation**: GPT-4o-mini interprets ambiguous commands by analyzing interactive page elements, so "open the first article" just works
-- **Continuous listening**: Mic stays open across commands with echo cancellation
-- **Keyboard shortcut**: `Ctrl+Shift+V` / `Cmd+Shift+V` to toggle mic
+### Voice & Conversation
 
-### Finger Tracking & Gesture Control
-- **Real-time hand tracking** via webcam using MediaPipe
-- **Cursor control**: Point your index finger to move a virtual cursor on the page
-- **L-shape gesture click**: Form an L-shape with thumb and index finger to click
-- **Scroll mode**: Pinch and drag to scroll pages
-- **Hover feedback**: Visual outlines on elements as you point at them
+**Voice Control** — Continuous listening via Web Speech API with natural language commands ("click login", "search for shoes", "scroll down"). GPT-4o-mini interprets ambiguous commands by analyzing interactive page elements. Supports echo cancellation and conversation context. Toggle with `Ctrl+Shift+V` / `Cmd+Shift+V`.
 
-### Color Blind Filters
-- **Three types**: Deuteranopia, Protanopia, Tritanopia
-- **Two modes**:
-  - **Correct** (Daltonization): Shifts indistinguishable colors into visible channels so color-blind users can tell them apart
-  - **Simulate**: Shows what the page looks like through color-blind eyes (for developers/designers testing their UI)
-- Implemented via SVG `feColorMatrix` filters using Machado 2009 simulation matrices
-- Preferences persist across sessions
+**Read Page (Narration)** — AI generates a structured overview of any webpage with clickable topic chips. Conversational follow-ups let you ask questions about what was just read. "Read Everything" mode provides sequential narration of all sections. Natural TTS via OpenAI API with browser fallback.
 
-### AI Page Simplification
-- One-click AI analysis of page structure and content
-- GPT-4o-mini generates targeted CSS rules to reduce visual complexity
-- Hides clutter, improves spacing, and enhances readability
+### Motor Accessibility
 
-### Read Page (Conversational Narration)
-- AI generates a structured overview of any webpage
-- **Topic-based navigation**: Click topic chips or say a topic name to hear about it
-- **Conversational follow-ups**: Ask questions about what was just read
-- **Read Everything**: Sequential narration of all page sections
-- Natural TTS via OpenAI API with browser fallback
+**Finger/Gesture Tracking** — Real-time hand tracking via webcam using MediaPipe + OpenCV. Point your index finger to move a virtual cursor, form an L-shape to click, pinch and drag to scroll. Runs as a subprocess with WebSocket bridge on port 9000.
 
-### Describe Images
-- Finds all meaningful images on a page (skips decorative ones)
-- GPT-4o-mini with vision generates natural descriptions
-- Sequential auto-narration with Next/Stop controls
+**Task Tunnel** — Step-by-step form navigation for long or complex forms. Highlights one field at a time with a floating overlay showing Prev/Next/Exit controls and step counter. Supports voice input for text fields and auto-detects dynamically added form fields via MutationObserver.
 
-### Inclusive Mode
-- Increases font size, line height, letter spacing, and tap target sizes
-- Adjustable font size slider (10px–40px)
-- Works on dynamic sites (Google, SPAs) via MutationObserver and continuous re-application
-- Injects into Shadow DOM for web component support
+### Visual Accessibility
 
-### Focus Mode
-- Hides distracting page elements (ads, sidebars, nav, popups, modals)
-- **Three intensity levels**:
-  - **Light**: Ads, popups, cookie banners only
-  - **Medium**: + sidebars, nav, footer
-  - **Strong**: + headers, comments, social share buttons, newsletters
-- Highlights main content area
+**Color Blind Filters** — Supports Deuteranopia, Protanopia, and Tritanopia with two modes: Correct (Daltonization) shifts indistinguishable colors into visible channels, and Simulate shows what the page looks like through color-blind eyes. Implemented via SVG `feColorMatrix` using Machado 2009 matrices.
 
-### Task Tunnel
-- Step-by-step form navigation for long or complex forms
-- Groups radio buttons and checkboxes intelligently
-- Floating overlay with Prev/Next/Exit controls and step counter
-- Auto-detects dynamically added form fields via MutationObserver
+**Dyslexia Mode** — Applies OpenDyslexic font, reading ruler, color overlays (yellow/blue/pink/green), and bionic reading to improve readability for users with dyslexia.
 
-### Auto-Suggest
-- Analyzes page on load (font sizes, nav link count, word density, missing alt text)
-- Suggests relevant accessibility modes via a dismissible banner
+**Inclusive Mode** — Increases font size (adjustable 10–40px slider), line height, letter spacing, and tap target sizes. Works on dynamic sites via MutationObserver and injects into Shadow DOM for web component support.
 
-### User Profiles & Preferences
-- Saves active modes, font size, intensity, color blind filter/mode to Chrome storage
-- Auto-applies saved preferences on extension load
-- Settings panel with auto-start voice input and auto-read options
+**AI Page Simplification** — One-click AI analysis sends page structure to GPT-4o-mini, which generates targeted CSS rules to reduce visual complexity — hiding clutter, improving spacing, and enhancing readability.
+
+### Cognitive Accessibility
+
+**Focus Mode** — Hides distracting elements (ads, popups, sidebars, cookie banners) at three intensity levels: Light (ads/popups only), Medium (+ sidebars, nav, footer), and Strong (+ headers, comments, social buttons). Uses opacity fading to avoid layout shifts.
+
+**Describe Images** — Finds all meaningful images on a page (skips decorative ones), then GPT-4o-mini with vision generates natural descriptions. Sequential auto-narration with Next/Stop controls.
+
+### Analysis & Personalization
+
+**Accessibility Scoring** — Scans the page against 7 WCAG-based categories (contrast, alt text, tap targets, headings, form labels, ARIA, keyboard navigation). Produces a score out of 100 with letter grade, per-category breakdown with issue highlighting, and before/after comparison when AccessFlow features are activated.
+
+**Auto-Suggest** — Analyzes page metrics on load (font sizes, nav link count, word density, missing alt text) and suggests relevant accessibility modes via a dismissible banner.
+
+**User Profiles** — Saves active modes, font size, intensity level, color blind filter/mode to Chrome storage. Auto-applies saved preferences on extension load with configurable auto-start options.
+
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph Chrome Extension
+        CP[content.js<br/>Page Injection]
+        SP[sidepanel.js<br/>UI & Voice]
+        BG[background.js<br/>Service Worker]
+        OS[offscreen.js<br/>Mic Access]
+    end
+
+    subgraph FastAPI Backend :8000
+        API[REST API<br/>13 Endpoints]
+        AI[GPT-4o-mini<br/>Commands · Narration<br/>Vision · TTS]
+    end
+
+    subgraph Finger Tracker :9000
+        FT[MediaPipe<br/>Hand Tracking]
+        WS[WebSocket<br/>Server]
+    end
+
+    SP <-->|Chrome Messaging| CP
+    SP <-->|Chrome Messaging| BG
+    BG <-->|WebSocket| WS
+    SP <-->|REST API| API
+    API --> AI
+    FT --> WS
+    OS -->|getUserMedia| SP
+```
+
+---
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
-| Extension | Chrome Manifest V3, Side Panel API |
-| Backend | FastAPI (Python), Uvicorn |
-| AI Models | GPT-4o-mini (commands, narration, images, simplification, TTS), Claude Sonnet (fallback) |
-| Voice | Web Speech API (STT), OpenAI TTS API |
-| Gesture | MediaPipe Hand Tracking, OpenCV, WebSocket |
-| Color Blind | SVG feColorMatrix filters (Machado 2009) |
+| Extension | Chrome Manifest V3 + Side Panel API |
+| Backend | FastAPI + Uvicorn (Python) |
+| AI | GPT-4o-mini (commands, narration, vision, simplification, TTS) |
+| Speech | Web Speech API (STT), OpenAI TTS (narration) |
+| Gestures | MediaPipe + OpenCV + WebSockets |
+| Color Blind | SVG feColorMatrix (Machado 2009 matrices) |
 | Storage | Chrome Storage API (sync + local) |
-
-## Project Structure
-
-```
-AccessFlow/
-├── accessflow-backend/          # Python FastAPI backend
-│   ├── main.py                  # API server (13 endpoints)
-│   ├── finger_tracker.py        # MediaPipe hand tracking + WebSocket
-│   ├── requirements.txt         # Python dependencies
-│   └── .env.example             # Environment variables template
-│
-├── accessflow-extension/        # Chrome Extension (Manifest V3)
-│   ├── manifest.json            # Extension configuration
-│   ├── background.js            # Service worker + WebSocket relay
-│   ├── content.js               # Page interaction (modes, filters, commands)
-│   ├── sidepanel.html           # Side panel UI
-│   ├── sidepanel.js             # Side panel logic + voice + state
-│   └── styles.css               # Extension styling
-│
-├── start-accessflow.py          # Cross-platform startup script
-├── stop-accessflow.py           # Cross-platform stop script
-├── start-accessflow.sh          # macOS/Linux startup
-└── start-accessflow.bat         # Windows startup
-```
 
 ## API Endpoints
 
@@ -122,35 +116,34 @@ AccessFlow/
 | GET | `/` | API status |
 | GET | `/health` | Health check |
 | POST | `/api/interpret-command` | AI voice command interpretation |
-| POST | `/api/simplify` | AI page simplification |
+| POST | `/api/simplify` | AI page simplification (CSS rules) |
 | POST | `/api/describe-images` | GPT-4o-mini vision image descriptions |
+| POST | `/api/narrate-page` | Full page narration |
 | POST | `/api/narrate-overview` | Page overview + topic extraction |
 | POST | `/api/narrate-topic` | Conversational topic narration |
-| POST | `/api/tts` | OpenAI text-to-speech |
-| POST | `/api/chat` | General chat with page context |
+| POST | `/api/tts` | OpenAI text-to-speech (audio/mpeg) |
+| POST | `/api/accessibility-summary` | AI accessibility report summary |
 | POST | `/api/finger-tracker/start` | Start hand tracking subprocess |
 | POST | `/api/finger-tracker/stop` | Stop hand tracking |
-| GET | `/api/finger-tracker/status` | Tracker status |
+| GET | `/api/finger-tracker/status` | Tracker running status |
 
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.8+
 - Google Chrome
 - OpenAI API key
 
-### 1. Clone and install
+### 1. Install & configure
 
 ```bash
 git clone https://github.com/ajiteshmanoj/AccessFlow.git
-cd AccessFlow
-cd accessflow-backend
+cd AccessFlow/accessflow-backend
 python -m venv venv
-source venv/bin/activate        # macOS/Linux
-# venv\Scripts\activate         # Windows
+source venv/bin/activate        # macOS/Linux (see SETUP.md for Windows)
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env and add: OPENAI_API_KEY=sk-...
+cp .env.example .env            # then add your OPENAI_API_KEY
 ```
 
 ### 2. Start the backend
@@ -160,30 +153,21 @@ cd ..
 python start-accessflow.py
 ```
 
-The API will be available at `http://localhost:8000`.
+### 3. Load the extension
 
-### 3. Load the Chrome extension
-
-1. Open `chrome://extensions`
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked** and select the `accessflow-extension` folder
-4. The AccessFlow icon appears in your toolbar
+1. Open `chrome://extensions` and enable **Developer mode**
+2. Click **Load unpacked** → select the `accessflow-extension` folder
 
 ### 4. Use it
 
-1. Open any website
-2. Click the AccessFlow icon to open the side panel
-3. Try voice commands (click the mic or press `Ctrl+Shift+V`):
-   - "search for headphones"
-   - "click the first result"
-   - "scroll down"
-   - "simplify page"
-   - "describe images"
-   - "color blind"
+Open any website, click the AccessFlow icon to open the side panel, and try voice commands like "search for shoes", "simplify page", or "describe images".
+
+> **Platform-specific instructions, troubleshooting, and Windows setup** → [SETUP.md](SETUP.md)
 
 ## Voice Commands
 
-### Page interaction
+### Page Interaction
+
 | Command | Action |
 |---------|--------|
 | "click [element]" | Click a button, link, or interactive element |
@@ -195,7 +179,8 @@ The API will be available at `http://localhost:8000`.
 | "close ad / popup" | Find and click close buttons |
 | "first / second article" | Click nth element by type |
 
-### Extension features
+### Extension Features
+
 | Command | Action |
 |---------|--------|
 | "inclusive mode" | Toggle Inclusive Mode |
@@ -208,31 +193,49 @@ The API will be available at `http://localhost:8000`.
 | "bigger text" / "smaller text" | Adjust font size |
 | "reset" | Reset all modes |
 
-## Stopping the Backend
+## Project Structure
 
-```bash
-python stop-accessflow.py
 ```
-
-## Troubleshooting
-
-### Port already in use (Windows)
-```batch
-stop-accessflow.bat
-# Or manually:
-netstat -ano | findstr :8000
-taskkill /F /PID <PID>
+AccessFlow/
+├── accessflow-backend/              # Python FastAPI backend
+│   ├── main.py                      # API server (13 endpoints)
+│   ├── finger_tracker.py            # MediaPipe hand tracking + WebSocket
+│   ├── hand_landmarker.task         # MediaPipe model file
+│   ├── requirements.txt             # Python dependencies
+│   └── .env.example                 # Environment variables template
+│
+├── accessflow-extension/            # Chrome Extension (Manifest V3)
+│   ├── manifest.json                # Extension configuration
+│   ├── background.js                # Service worker + WebSocket relay
+│   ├── content.js                   # Page injection (modes, filters, commands)
+│   ├── sidepanel.html               # Side panel UI
+│   ├── sidepanel.js                 # Side panel logic + voice + state
+│   ├── offscreen.html               # Offscreen document for mic access
+│   ├── offscreen.js                 # getUserMedia prompt handler
+│   ├── styles.css                   # Extension styling
+│   ├── fonts/                       # OpenDyslexic font files (.woff2)
+│   ├── icons/                       # Extension icons (16/48/128px)
+│   └── LICENSE                      # MIT License
+│
+├── start-accessflow.py              # Cross-platform startup script
+├── start-accessflow.sh              # macOS/Linux startup
+├── start-accessflow.bat             # Windows startup
+├── stop-accessflow.py               # Cross-platform stop script
+├── stop-accessflow.sh               # macOS/Linux stop
+├── stop-accessflow.bat              # Windows stop
+├── SETUP.md                         # Detailed setup & troubleshooting
+├── LICENSE                          # MIT License
+└── README.md
 ```
-
-### Finger tracker not starting
-1. Ensure webcam is not in use by another app
-2. Try running manually: `cd accessflow-backend && python finger_tracker.py`
-3. Check that MediaPipe and OpenCV are installed
-
-### Extension not loading
-1. Go to `chrome://extensions`, click Reload on AccessFlow
-2. Open DevTools (F12) and check for errors in the console
 
 ## License
 
-MIT
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+## Contributors
+
+| Name | GitHub |
+|------|--------|
+| Ajitesh | [ajiteshmanoj](mailto:ajiteshmanoj@gmail.com) |
+| Cheng Yu | [chongchengyuccy](mailto:chongchengyuccy@gmail.com) |
+| Jian Hao | [jjianhhao](mailto:hojianhao2003@gmail.com) |

@@ -7,6 +7,16 @@
   const DYSLEXIA_STYLE_ID = "accessflow-dyslexia";
   const DYSLEXIA_RULER_ID = "accessflow-dyslexia-ruler";
   const DYSLEXIA_OVERLAY_ID = "accessflow-dyslexia-overlay";
+  const INCLUSIVE_MODE_REAPPLY_INTERVAL_MS = 300;
+  const INCLUSIVE_MODE_CLEANUP_DELAY_MS = 60;
+  const SCROLL_DEBOUNCE_MS = 100;
+  const ELEMENT_CLICK_DELAY_MS = 300;
+  const ELEMENT_SCAN_CAP = 500;
+  const MIN_IMAGE_DIMENSION_PX = 100;
+  const TUNNEL_VOICE_MIC_RELEASE_DELAY_MS = 150;
+  const TUNNEL_INPUT_DEBOUNCE_MS = 300;
+  const TUNNEL_KEYBOARD_BUFFER_MS = 500;
+  const TUNNEL_REFRESH_DELAY_MS = 300;
 
   function setStyle(cssText) {
     let el = document.getElementById(STYLE_ID);
@@ -133,7 +143,7 @@
       clearHoverOutline();
 
       console.log("[AccessFlow] Reset complete! Styles should be fully cleared.");
-    }, 60); // Slight delay after Inclusive Mode cleanup
+    }, INCLUSIVE_MODE_CLEANUP_DELAY_MS);
   }
 
   // ========== ENHANCED INCLUSIVE MODE (Works on Google & Dynamic Sites) ==========
@@ -324,7 +334,7 @@
     inclusiveModeInterval = setInterval(() => {
       applyDirectStyles(fontSize);
       applySiteSpecificOverrides(fontSize);
-    }, 300); // Re-apply every 300ms
+    }, INCLUSIVE_MODE_REAPPLY_INTERVAL_MS);
   }
   // ========== END ENHANCED INCLUSIVE MODE ==========
 
@@ -467,7 +477,7 @@
       clearTimeout(scrollTimeout);
       scrollTimeout = setTimeout(() => {
         applyFocusHiding();
-      }, 100);
+      }, SCROLL_DEBOUNCE_MS);
     };
 
     window.addEventListener('scroll', focusModeScrollListener, { passive: true });
@@ -844,7 +854,7 @@
       const pointerUp = new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true });
       el.dispatchEvent(pointerDown);
       el.dispatchEvent(pointerUp);
-    }, 300);
+    }, ELEMENT_CLICK_DELAY_MS);
 
     return true;
   }
@@ -983,7 +993,7 @@
         clearTimeout(tunnelRefreshTimeout);
         tunnelRefreshTimeout = setTimeout(() => {
           refreshTunnelInputs();
-        }, 300); // Wait 300ms after last change
+        }, TUNNEL_REFRESH_DELAY_MS);
       }
     });
 
@@ -1025,19 +1035,55 @@
       overlay.style.padding = "10px";
       overlay.style.fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
       overlay.style.fontSize = "13px";
-      overlay.innerHTML = `
-        <div style="display:flex;align-items:center;gap:8px;">
-          <strong>Task Tunnel</strong>
-          <span id="af-step" style="color:#6b7280;"></span>
-        </div>
-        <div id="af-voice-preview" style="font-size:11px;color:#6b7280;margin-top:4px;min-height:14px;font-style:italic;"></div>
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <button id="af-prev" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#f3f4f6;cursor:pointer;">Prev</button>
-          <button id="af-next" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#eef2ff;cursor:pointer;">Next</button>
-          <button id="af-mic" style="padding:6px 10px;border:1px solid #10b981;border-radius:10px;background:#d1fae5;cursor:pointer;">🎤 Ready</button>
-          <button id="af-exit" style="padding:6px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff1f2;cursor:pointer;">Exit</button>
-        </div>
-      `;
+      // Header row
+      const headerRow = document.createElement("div");
+      headerRow.style.cssText = "display:flex;align-items:center;gap:8px;";
+      const titleEl = document.createElement("strong");
+      titleEl.textContent = "Task Tunnel";
+      const stepEl = document.createElement("span");
+      stepEl.id = "af-step";
+      stepEl.style.color = "#6b7280";
+      headerRow.appendChild(titleEl);
+      headerRow.appendChild(stepEl);
+
+      // Voice preview
+      const voicePreview = document.createElement("div");
+      voicePreview.id = "af-voice-preview";
+      voicePreview.style.cssText = "font-size:11px;color:#6b7280;margin-top:4px;min-height:14px;font-style:italic;";
+
+      // Button row
+      const btnRow = document.createElement("div");
+      btnRow.style.cssText = "display:flex;gap:8px;margin-top:8px;";
+      const btnStyle = "padding:6px 10px;border-radius:10px;cursor:pointer;";
+
+      const prevBtn = document.createElement("button");
+      prevBtn.id = "af-prev";
+      prevBtn.style.cssText = btnStyle + "border:1px solid #e5e7eb;background:#f3f4f6;";
+      prevBtn.textContent = "Prev";
+
+      const nextBtn = document.createElement("button");
+      nextBtn.id = "af-next";
+      nextBtn.style.cssText = btnStyle + "border:1px solid #e5e7eb;background:#eef2ff;";
+      nextBtn.textContent = "Next";
+
+      const micBtn = document.createElement("button");
+      micBtn.id = "af-mic";
+      micBtn.style.cssText = btnStyle + "border:1px solid #10b981;background:#d1fae5;";
+      micBtn.textContent = "🎤 Ready";
+
+      const exitBtn = document.createElement("button");
+      exitBtn.id = "af-exit";
+      exitBtn.style.cssText = btnStyle + "border:1px solid #e5e7eb;background:#fff1f2;";
+      exitBtn.textContent = "Exit";
+
+      btnRow.appendChild(prevBtn);
+      btnRow.appendChild(nextBtn);
+      btnRow.appendChild(micBtn);
+      btnRow.appendChild(exitBtn);
+
+      overlay.appendChild(headerRow);
+      overlay.appendChild(voicePreview);
+      overlay.appendChild(btnRow);
       document.body.appendChild(overlay);
 
       overlay.querySelector("#af-prev").onclick = () => { tunnelState.idx = Math.max(0, tunnelState.idx - 1); focusTunnelCurrent(); };
@@ -1138,13 +1184,13 @@
     if (!SpeechRecognition) return;
     // Abort any existing tunnel voice session
     if (tunnelVoiceRecognition) {
-      try { tunnelVoiceRecognition.abort(); } catch (_) {}
+      try { tunnelVoiceRecognition.abort(); } catch (err) { console.warn("[AccessFlow]", err); }
       tunnelVoiceRecognition = null;
     }
     // Kill sidepanel voice and wait for browser to release the mic
     const needsDelay = !!voiceRecognition;
     if (voiceRecognition) {
-      try { voiceRecognition.abort(); } catch (_) {}
+      try { voiceRecognition.abort(); } catch (err) { console.warn("[AccessFlow]", err); }
       voiceRecognition = null;
     }
 
@@ -1326,7 +1372,7 @@
 
     // If we just killed sidepanel voice, wait for browser to release the mic
     if (needsDelay) {
-      setTimeout(doStart, 150);
+      setTimeout(doStart, TUNNEL_VOICE_MIC_RELEASE_DELAY_MS);
     } else {
       doStart();
     }
@@ -1334,7 +1380,7 @@
 
   function stopTunnelVoice() {
     if (tunnelVoiceRecognition) {
-      try { tunnelVoiceRecognition.abort(); } catch (_) {}
+      try { tunnelVoiceRecognition.abort(); } catch (err) { console.warn("[AccessFlow]", err); }
       tunnelVoiceRecognition = null;
     }
     tunnelVoiceActive = false;
@@ -1473,7 +1519,7 @@
       }
       if (/^(fullscreen|full screen|enter fullscreen)$/.test(c)) {
         if (media) {
-          try { media.requestFullscreen(); return { ok: true, message: "Entering fullscreen." }; } catch (_) {}
+          try { media.requestFullscreen(); return { ok: true, message: "Entering fullscreen." }; } catch (err) { console.warn("[AccessFlow]", err); }
         }
         const btn = document.querySelector(".ytp-fullscreen-button, [aria-label*='Full screen'], [aria-label*='Fullscreen']");
         if (btn) { btn.click(); return { ok: true, message: "Entering fullscreen." }; }
@@ -2040,7 +2086,8 @@
       const res  = await fetch(src, { credentials: "include" });
       const blob = await res.blob();
       return await blobToBase64(blob);
-    } catch (_) {
+    } catch (err) {
+      console.warn("[AccessFlow]", err);
       return null; // caller will fall back to raw URL
     }
   }
@@ -2051,7 +2098,7 @@
       if (img.getAttribute("role") === "presentation") return false;
       if (img.getAttribute("alt") === "") return false; // explicitly decorative
       const rect = img.getBoundingClientRect();
-      return rect.width >= 100 && rect.height >= 100;
+      return rect.width >= MIN_IMAGE_DIMENSION_PX && rect.height >= MIN_IMAGE_DIMENSION_PX;
     });
 
     const results = [];
@@ -2155,7 +2202,7 @@
 
     // Stop any previous session
     if (voiceRecognition) {
-      try { voiceRecognition.abort(); } catch (_) {}
+      try { voiceRecognition.abort(); } catch (err) { console.warn("[AccessFlow]", err); }
     }
 
     voiceRecognition = new SpeechRecognition();
@@ -2175,7 +2222,7 @@
         if (event.results[i].isFinal) isFinal = true;
       }
       if (portOpen) {
-        try { port.postMessage({ type: "VOICE_RESULT", transcript, isFinal }); } catch (_) {}
+        try { port.postMessage({ type: "VOICE_RESULT", transcript, isFinal }); } catch (err) { console.warn("[AccessFlow]", err); }
       }
     };
 
@@ -2190,8 +2237,9 @@
         return;
       }
       if (portOpen && voiceRecognition) {
-        try { voiceRecognition.start(); } catch (_) {
-          try { port.postMessage({ type: "VOICE_END" }); } catch (_2) {}
+        try { voiceRecognition.start(); } catch (err) {
+          console.warn("[AccessFlow]", err);
+          try { port.postMessage({ type: "VOICE_END" }); } catch (err2) { console.warn("[AccessFlow]", err2); }
           voiceRecognition = null;
         }
         return;
@@ -2207,14 +2255,14 @@
         errorMsg = "Microphone access denied. Allow mic permission and try again.";
       }
       if (portOpen) {
-        try { port.postMessage({ type: "VOICE_ERROR", error: errorMsg }); } catch (_) {}
+        try { port.postMessage({ type: "VOICE_ERROR", error: errorMsg }); } catch (err) { console.warn("[AccessFlow]", err); }
       }
     };
 
     port.onDisconnect.addListener(() => {
       portOpen = false;
       if (voiceRecognition) {
-        try { voiceRecognition.abort(); } catch (_) {}
+        try { voiceRecognition.abort(); } catch (err) { console.warn("[AccessFlow]", err); }
         voiceRecognition = null;
       }
     });
@@ -2231,7 +2279,7 @@
       }
     }).catch(() => {
       if (portOpen) {
-        try { port.postMessage({ type: "VOICE_ERROR", error: "Microphone access denied. Allow mic permission and try again." }); } catch (_) {}
+        try { port.postMessage({ type: "VOICE_ERROR", error: "Microphone access denied. Allow mic permission and try again." }); } catch (err) { console.warn("[AccessFlow]", err); }
       }
     });
   });
@@ -2714,7 +2762,7 @@
     let scanned = 0;
 
     for (const el of elements) {
-      if (scanned >= 500) break; // Performance cap
+      if (scanned >= ELEMENT_SCAN_CAP) break; // Performance cap
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
       const text = (el.textContent || "").trim();
@@ -3127,7 +3175,7 @@
     clearAccessibilityHighlight();
 
     let el;
-    try { el = document.querySelector(selector); } catch (_) {}
+    try { el = document.querySelector(selector); } catch (err) { console.warn("[AccessFlow]", err); }
     if (!el) return;
 
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -3289,7 +3337,7 @@
         document.getElementById("accessflow-colorblind")?.remove();
         document.documentElement.style.removeProperty("filter");
 
-        const filter = msg.filter || "deuteranopia";
+        const cbFilter = msg.filter || "deuteranopia";
         const mode = msg.mode || "correct";
 
         // Machado 2009 simulation matrices & daltonization correction matrices
@@ -3308,7 +3356,7 @@
           }
         };
 
-        const matrixValues = matrices[filter]?.[mode];
+        const matrixValues = matrices[cbFilter]?.[mode];
         if (!matrixValues) {
           sendResponse({ ok: false, message: "Unknown filter/mode combination." });
           return true;
@@ -3319,7 +3367,15 @@
         const svg = document.createElementNS(svgNS, "svg");
         svg.id = "accessflow-cb-svg";
         svg.setAttribute("style", "position:absolute;width:0;height:0;");
-        svg.innerHTML = `<defs><filter id="af-cb-filter"><feColorMatrix type="matrix" values="${matrixValues}"/></filter></defs>`;
+        const defs = document.createElementNS(svgNS, "defs");
+        const filter = document.createElementNS(svgNS, "filter");
+        filter.setAttribute("id", "af-cb-filter");
+        const feColorMatrix = document.createElementNS(svgNS, "feColorMatrix");
+        feColorMatrix.setAttribute("type", "matrix");
+        feColorMatrix.setAttribute("values", matrixValues);
+        filter.appendChild(feColorMatrix);
+        defs.appendChild(filter);
+        svg.appendChild(defs);
         document.body.appendChild(svg);
 
         // Apply filter via dedicated style element
@@ -3328,7 +3384,7 @@
         style.textContent = "html { filter: url(#af-cb-filter) !important; }";
         document.head.appendChild(style);
 
-        sendResponse({ ok: true, message: `Color blind filter applied: ${filter} (${mode}).` });
+        sendResponse({ ok: true, message: `Color blind filter applied: ${cbFilter} (${mode}).` });
         return true;
       }
       if (msg?.type === "COLORBLIND_OFF") {

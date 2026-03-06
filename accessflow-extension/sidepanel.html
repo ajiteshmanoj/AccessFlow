@@ -18,11 +18,11 @@
       <h3>🎤 Voice Commands</h3>
       <div class="row">
         <input id="cmd" placeholder='Say "search for shoes" or "click login"' />
-        <button id="mic" title="Voice input">🎤</button>
+        <button id="mic" title="Voice input" aria-label="Toggle voice input">🎤</button>
         <button id="send">Send</button>
       </div>
-      <div id="voice-status" style="font-size:11px; color:#666; margin-top:4px; min-height:16px;"></div>
-      <div id="log" style="margin-top:10px; font-size:12px;"></div>
+      <div id="voice-status" style="font-size:11px; color:#666; margin-top:4px; min-height:16px;" aria-live="polite"></div>
+      <div id="log" style="margin-top:10px; font-size:12px;" aria-live="polite"></div>
     </div>
 
     <!-- Quick Actions (Main Modes) -->
@@ -31,7 +31,7 @@
       <div class="grid">
         <!-- Inclusive Mode -->
         <div class="mode-section">
-          <button id="inclusive" class="primary">✅ Inclusive Mode</button>
+          <button id="inclusive" class="primary" aria-pressed="false" aria-expanded="false">✅ Inclusive Mode</button>
           <div id="inclusive-controls" style="display:none; margin-top:8px;">
             <label for="font-size-slider" style="font-size:12px;">
               Font Size: <span id="font-size-value">18</span>px
@@ -50,7 +50,7 @@
 
         <!-- Focus Mode -->
         <div class="mode-section">
-          <button id="focus">🎯 Focus Mode</button>
+          <button id="focus" aria-pressed="false" aria-expanded="false">🎯 Focus Mode</button>
           <div id="focus-controls" style="display:none; margin-top:8px;">
             <div class="intensity-selector">
               <button class="intensity-btn" data-level="light">Light</button>
@@ -62,7 +62,7 @@
 
         <!-- Color Blind Filter -->
         <div class="mode-section">
-          <button id="colorblind">🎨 Color Blind Filter</button>
+          <button id="colorblind" aria-pressed="false" aria-expanded="false">🎨 Color Blind Filter</button>
           <div id="colorblind-controls" style="display:none; margin-top:8px;">
             <div class="cb-filter-selector">
               <button class="cb-filter-btn active" data-filter="deuteranopia">Deuteranopia</button>
@@ -78,7 +78,7 @@
 
         <!-- Dyslexia Mode -->
         <div class="mode-section">
-          <button id="dyslexia">🔤 Dyslexia Mode</button>
+          <button id="dyslexia" aria-pressed="false" aria-expanded="false">🔤 Dyslexia Mode</button>
           <div id="dyslexia-controls" style="display:none; margin-top:8px;">
             <div class="dyslexia-feature-selector">
               <button class="dyslexia-feat-btn active" data-feature="font">Font</button>
@@ -95,7 +95,7 @@
           </div>
         </div>
 
-        <button id="simplify">🧠 Simplify Page</button>
+        <button id="simplify" aria-pressed="false">🧠 Simplify Page</button>
         <button id="reset" class="danger">↩ Reset Page</button>
       </div>
     </div>
@@ -106,7 +106,7 @@
 
       <!-- Read Page Section -->
       <div class="tool-section">
-        <button id="narrate-page">📖 Read Page</button>
+        <button id="narrate-page" aria-expanded="false">📖 Read Page</button>
         <!-- Narration Panel (Hidden by default) -->
         <div id="narration-panel" style="display:none; margin-top:12px;">
           <div id="topic-chips" style="margin-bottom:8px;"></div>
@@ -119,7 +119,7 @@
 
       <!-- Describe Images Section -->
       <div class="tool-section" style="margin-top:8px;">
-        <button id="describe-images">👁 Describe Images</button>
+        <button id="describe-images" aria-expanded="false">👁 Describe Images</button>
         <!-- Image Description Controls (Hidden by default) -->
         <div id="image-description-controls" style="display:none; margin-top:12px;">
           <button id="next-image" class="primary">⏭ Next Image</button>
@@ -129,8 +129,8 @@
 
       <!-- Other Tools -->
       <div class="grid" style="margin-top:8px;">
-        <button id="finger-tracking">👆 Finger Tracking</button>
-        <button id="tunnel">🧭 Task Tunnel</button>
+        <button id="finger-tracking" aria-pressed="false">👆 Finger Tracking</button>
+        <button id="tunnel" aria-pressed="false">🧭 Task Tunnel</button>
       </div>
     </div>
 
@@ -138,9 +138,9 @@
     <div class="section">
       <h3>📊 Accessibility Score</h3>
       <div id="score-panel">
-        <div id="score-summary" style="display:none;">
+        <div id="score-summary" style="display:none;" aria-live="polite">
           <div id="score-ring-container">
-            <svg id="score-ring" viewBox="0 0 120 120" width="120" height="120">
+            <svg id="score-ring" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Accessibility score">
               <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" stroke-width="10"/>
               <circle id="score-ring-progress" cx="60" cy="60" r="52" fill="none" stroke="#10b981" stroke-width="10"
                 stroke-dasharray="326.73" stroke-dashoffset="326.73" stroke-linecap="round"

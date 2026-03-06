@@ -72,7 +72,7 @@ async function startRecognition() {
 
   recognition.onend = () => {
     if (keepAlive) {
-      try { recognition.start(); } catch (_) {}
+      try { recognition.start(); } catch (err) { console.warn("[AccessFlow]", err); }
     }
   };
 
@@ -86,7 +86,7 @@ async function startRecognition() {
 function stopRecognition() {
   keepAlive = false;
   if (recognition) {
-    try { recognition.abort(); } catch (_) {}
+    try { recognition.abort(); } catch (err) { console.warn("[AccessFlow]", err); }
     recognition = null;
   }
   // Release the mic stream

@@ -1,5 +1,10 @@
 const BACKEND = "http://localhost:8000";
 
+const PROFILE_APPLY_DELAY_MS = 500;
+
+let _simplifyPending = false;
+let _narratePending = false;
+
 // Mode state tracking
 let inclusiveFontSize = 18; // Default font size
 let isInclusiveModeActive = false;
@@ -65,6 +70,13 @@ async function ensureContentScript(tabId) {
   }
 }
 
+function sendMessageWithTimeout(tabId, payload, timeoutMs = 5000) {
+  return Promise.race([
+    sendMessage(tabId, payload),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("Message timeout")), timeoutMs))
+  ]);
+}
+
 async function sendToActiveTab(payload) {
   const tab = await getActiveTab();
   if (!tab?.id) return { ok: false, message: "No active tab found." };
@@ -79,11 +91,15 @@ async function sendToActiveTab(payload) {
   const ok = await ensureContentScript(tab.id);
   if (!ok) return { ok: false, message: "Could not inject content script into this page." };
 
-  const res = await sendMessage(tab.id, payload);
-  if (res?.__lastError) {
-    return { ok: false, message: "Could not establish connection. Reload the page and try again." };
+  try {
+    const res = await sendMessageWithTimeout(tab.id, payload);
+    if (res?.__lastError) {
+      return { ok: false, message: "Could not establish connection. Reload the page and try again." };
+    }
+    return res;
+  } catch (err) {
+    return { ok: false, message: err.message || "Request timed out." };
   }
-  return res;
 }
 
 // ========== USER PROFILE PERSISTENCE ==========
@@ -101,7 +117,8 @@ async function loadProfile() {
   try {
     const result = await chrome.storage.local.get("userProfile");
     return { ...PROFILE_DEFAULTS, ...(result.userProfile || {}) };
-  } catch (_) {
+  } catch (err) {
+    console.warn("[AccessFlow]", err);
     return { ...PROFILE_DEFAULTS };
   }
 }
@@ -115,7 +132,7 @@ async function saveProfile(updates) {
 
 async function applyProfile(profile) {
   // Auto-apply saved modes by clicking their buttons (with delay for content script)
-  await new Promise(resolve => setTimeout(resolve, 500));
+  await new Promise(resolve => setTimeout(resolve, PROFILE_APPLY_DELAY_MS));
 
   if (profile.inclusiveMode) {
     document.getElementById("inclusive").click();
@@ -202,6 +219,8 @@ document.getElementById("inclusive").onclick = async () => {
     // Toggle OFF
     await sendToActiveTab({ type: "INCLUSIVE_OFF" });
     document.getElementById("inclusive").classList.remove("active");
+    document.getElementById("inclusive").setAttribute("aria-pressed", "false");
+    document.getElementById("inclusive").setAttribute("aria-expanded", "false");
     document.getElementById("inclusive-controls").style.display = "none";
     isInclusiveModeActive = false;
     log("Inclusive Mode removed.");
@@ -212,6 +231,8 @@ document.getElementById("inclusive").onclick = async () => {
   // Toggle ON
   const res = await sendToActiveTab({ type: "INCLUSIVE_ON", fontSize: inclusiveFontSize });
   document.getElementById("inclusive").classList.add("active");
+  document.getElementById("inclusive").setAttribute("aria-pressed", "true");
+  document.getElementById("inclusive").setAttribute("aria-expanded", "true");
   document.getElementById("inclusive-controls").style.display = "block";
   isInclusiveModeActive = true;
   log(res?.message || "Inclusive Mode applied.");
@@ -223,6 +244,8 @@ document.getElementById("focus").onclick = async () => {
     // Toggle OFF
     await sendToActiveTab({ type: "FOCUS_OFF" });
     document.getElementById("focus").classList.remove("active");
+    document.getElementById("focus").setAttribute("aria-pressed", "false");
+    document.getElementById("focus").setAttribute("aria-expanded", "false");
     document.getElementById("focus-controls").style.display = "none";
     isFocusModeActive = false;
     log("Focus Mode removed.");
@@ -233,6 +256,8 @@ document.getElementById("focus").onclick = async () => {
   // Toggle ON
   const res = await sendToActiveTab({ type: "FOCUS_ON", intensity: focusIntensity });
   document.getElementById("focus").classList.add("active");
+  document.getElementById("focus").setAttribute("aria-pressed", "true");
+  document.getElementById("focus").setAttribute("aria-expanded", "true");
   document.getElementById("focus-controls").style.display = "block";
   isFocusModeActive = true;
   log(res?.message || "Focus Mode applied.");
@@ -244,6 +269,7 @@ document.getElementById("tunnel").onclick = async () => {
     // Toggle OFF
     await sendToActiveTab({ type: "TUNNEL_OFF" });
     document.getElementById("tunnel").classList.remove("active");
+    document.getElementById("tunnel").setAttribute("aria-pressed", "false");
     isTunnelModeActive = false;
     log("Task Tunnel stopped.");
     return;
@@ -252,6 +278,7 @@ document.getElementById("tunnel").onclick = async () => {
   // Toggle ON
   const res = await sendToActiveTab({ type: "TUNNEL_ON" });
   document.getElementById("tunnel").classList.add("active");
+  document.getElementById("tunnel").setAttribute("aria-pressed", "true");
   isTunnelModeActive = true;
   log(res?.message || "Task Tunnel started.");
 };
@@ -261,6 +288,8 @@ document.getElementById("colorblind").onclick = async () => {
     // Toggle OFF
     await sendToActiveTab({ type: "COLORBLIND_OFF" });
     document.getElementById("colorblind").classList.remove("active");
+    document.getElementById("colorblind").setAttribute("aria-pressed", "false");
+    document.getElementById("colorblind").setAttribute("aria-expanded", "false");
     document.getElementById("colorblind-controls").style.display = "none";
     isColorBlindActive = false;
     log("Color blind filter removed.");
@@ -271,6 +300,8 @@ document.getElementById("colorblind").onclick = async () => {
   // Toggle ON
   const res = await sendToActiveTab({ type: "COLORBLIND_ON", filter: colorBlindFilter, mode: colorBlindMode });
   document.getElementById("colorblind").classList.add("active");
+  document.getElementById("colorblind").setAttribute("aria-pressed", "true");
+  document.getElementById("colorblind").setAttribute("aria-expanded", "true");
   document.getElementById("colorblind-controls").style.display = "block";
   isColorBlindActive = true;
   log(res?.message || "Color blind filter applied.");
@@ -282,6 +313,8 @@ document.getElementById("dyslexia").onclick = async () => {
     // Toggle OFF
     await sendToActiveTab({ type: "DYSLEXIA_OFF" });
     document.getElementById("dyslexia").classList.remove("active");
+    document.getElementById("dyslexia").setAttribute("aria-pressed", "false");
+    document.getElementById("dyslexia").setAttribute("aria-expanded", "false");
     document.getElementById("dyslexia-controls").style.display = "none";
     isDyslexiaModeActive = false;
     log("Dyslexia Mode removed.");
@@ -296,6 +329,8 @@ document.getElementById("dyslexia").onclick = async () => {
     overlayColor: dyslexiaOverlayColor
   });
   document.getElementById("dyslexia").classList.add("active");
+  document.getElementById("dyslexia").setAttribute("aria-pressed", "true");
+  document.getElementById("dyslexia").setAttribute("aria-expanded", "true");
   document.getElementById("dyslexia-controls").style.display = "block";
   isDyslexiaModeActive = true;
   log(res?.message || "Dyslexia Mode applied.");
@@ -464,12 +499,17 @@ document.getElementById("simplify").onclick = async () => {
     await sendToActiveTab({ type: "FOCUS_OFF" });
     await sendToActiveTab({ type: "SIMPLIFY_OFF" });
     document.getElementById("simplify").classList.remove("active");
+    document.getElementById("simplify").setAttribute("aria-pressed", "false");
     isSimplifyActive = false;
     log("Simplification removed.");
     saveProfile({ simplifyPage: false });
     return;
   }
 
+  if (_simplifyPending) return;
+  _simplifyPending = true;
+
+  try {
   // Toggle ON - First activate Light focus mode to hide ads
   log("Activating Light focus mode...");
   await sendToActiveTab({ type: "FOCUS_ON", intensity: "light" });
@@ -504,6 +544,7 @@ document.getElementById("simplify").onclick = async () => {
       });
 
       document.getElementById("simplify").classList.add("active");
+      document.getElementById("simplify").setAttribute("aria-pressed", "true");
       isSimplifyActive = true;
       log("Page simplified: " + data.summary);
       saveProfile({ simplifyPage: true });
@@ -517,6 +558,9 @@ document.getElementById("simplify").onclick = async () => {
     }
   } else {
     log("Could not get page content: " + (res?.message || "Unknown error"));
+  }
+  } finally {
+    _simplifyPending = false;
   }
 };
 
@@ -990,7 +1034,8 @@ async function speak(text) {
       };
       currentAudio.play();
     });
-  } catch (_) {
+  } catch (err) {
+    console.warn("[AccessFlow]", err);
     // Fallback to browser TTS
     await speakBrowser(text);
     isSpeaking = false;
@@ -1024,11 +1069,13 @@ let isDescribingImages = false;
 function showNarrationPanel(visible) {
   const panel = document.getElementById("narration-panel");
   if (panel) panel.style.display = visible ? "block" : "none";
+  document.getElementById("narrate-page")?.setAttribute("aria-expanded", visible ? "true" : "false");
 }
 
 function showImageDescriptionControls(visible) {
   const controls = document.getElementById("image-description-controls");
   if (controls) controls.style.display = visible ? "block" : "none";
+  document.getElementById("describe-images")?.setAttribute("aria-expanded", visible ? "true" : "false");
 }
 
 async function describeCurrentImage() {
@@ -1297,6 +1344,10 @@ document.getElementById("describe-images").onclick = async () => {
 };
 
 document.getElementById("narrate-page").onclick = async () => {
+  if (_narratePending) return;
+  _narratePending = true;
+
+  try {
   log("Analyzing page...");
   exitNarrationMode(true);
 
@@ -1345,6 +1396,9 @@ document.getElementById("narrate-page").onclick = async () => {
     await respond(narrationOverview);
   } catch (e) {
     log("Error calling narrate-overview API: " + e.message);
+  }
+  } finally {
+    _narratePending = false;
   }
 };
 
@@ -1409,7 +1463,7 @@ function playTone(freq, durationMs, startDelay = 0) {
     const t = ctx.currentTime + startDelay / 1000;
     osc.start(t);
     osc.stop(t + durationMs / 1000);
-  } catch (_) { /* audio not available — safe to ignore */ }
+  } catch (err) { console.warn("[AccessFlow]", err); }
 }
 
 function playStartChime() {
@@ -1434,7 +1488,7 @@ function stopListening() {
   isListening = false;
   micBtn.classList.remove("listening");
   if (voicePort) {
-    try { voicePort.disconnect(); } catch (_) {}
+    try { voicePort.disconnect(); } catch (err) { console.warn("[AccessFlow]", err); }
     voicePort = null;
   }
   // Clear status and timer
@@ -1629,11 +1683,13 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (msg.active) {
       btn.textContent = "🛑 Stop Finger Tracking";
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       isFingerTrackingActive = true;
       log("Finger tracking started. Point at the screen to move the cursor.");
     } else {
       btn.innerHTML = "👆 Finger Tracking<br><span class='pill'>hand gestures</span>";
       btn.classList.remove("active");
+      btn.setAttribute("aria-pressed", "false");
       isFingerTrackingActive = false;
       log("Finger tracking stopped.");
     }
@@ -1936,8 +1992,8 @@ async function analyzeAndSuggest() {
     banner.querySelector(".suggest-dismiss").onclick = () => {
       banner.style.display = "none";
     };
-  } catch (_) {
-    // Silent fail — suggestion is non-critical
+  } catch (err) {
+    console.warn("[AccessFlow]", err);
   }
 }
 // ========== END AUTO-SUGGEST ==========
@@ -2003,6 +2059,9 @@ function renderScoreRing(score, grade) {
   value.textContent = score;
   value.setAttribute("fill", color);
   gradeEl.textContent = grade;
+
+  const svg = document.getElementById("score-ring");
+  if (svg) svg.setAttribute("aria-label", `Accessibility score: ${score} out of 100, grade ${grade}`);
 }
 
 const CATEGORY_LABELS = {

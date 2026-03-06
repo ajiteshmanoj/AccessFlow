@@ -6,13 +6,14 @@ Handles AI processing for the accessibility companion Chrome extension.
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import os
 import sys
 import json
 import subprocess
 import signal
+import atexit
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -30,6 +31,16 @@ except ImportError:
 
 load_dotenv()
 
+_openai_client = None
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        _openai_client = OpenAI(api_key=api_key)
+    return _openai_client
+
 app = FastAPI(
     title="AccessFlow API",
     description="AI-powered accessibility companion backend",
@@ -37,9 +48,11 @@ app = FastAPI(
 )
 
 # Enable CORS for Chrome extension
+extension_id = os.getenv("EXTENSION_ID", "*")
+cors_origin = f"chrome-extension://{extension_id}" if extension_id != "*" else "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[cors_origin],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,6 +122,8 @@ def stop_finger_tracker():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+atexit.register(stop_finger_tracker)
+
 # ========== END FINGER TRACKER MANAGEMENT ==========
 
 
@@ -121,19 +136,13 @@ class UserProfile(BaseModel):
 
 
 class PageContext(BaseModel):
-    url: str
-    title: str
+    url: str = Field(..., max_length=5000)
+    title: str = Field(..., max_length=5000)
     headings: Optional[List[Dict[str, str]]] = []
     interactive_elements: Optional[List[Dict[str, Any]]] = []
     landmarks: Optional[List[Dict[str, str]]] = []
     images: Optional[List[Dict[str, str]]] = []
-    main_content: Optional[str] = ""
-
-
-class ChatRequest(BaseModel):
-    message: str
-    page_context: Optional[PageContext] = None
-    user_profile: Optional[UserProfile] = None
+    main_content: Optional[str] = Field(default="", max_length=50000)
 
 
 class Action(BaseModel):
@@ -147,22 +156,17 @@ class Action(BaseModel):
     description: Optional[str] = None
 
 
-class ChatResponse(BaseModel):
-    response_text: str
-    actions: List[Action] = []
-
-
 # --- Content Description & Narration models (GPT-4o-mini) ---
 
 class ImageItem(BaseModel):
-    base64: Optional[str] = None   # base64-encoded image data (preferred)
+    base64: Optional[str] = Field(default=None, max_length=5000000)   # base64-encoded image data (preferred)
     url: Optional[str] = None      # raw src URL fallback if base64 failed
     original_alt: Optional[str] = None  # existing alt text on the page, if any
 
 
 class DescribeImagesRequest(BaseModel):
     images: List[ImageItem]
-    page_title: Optional[str] = ""
+    page_title: Optional[str] = Field(default="", max_length=5000)
 
 
 class ImageDescription(BaseModel):
@@ -175,14 +179,14 @@ class DescribeImagesResponse(BaseModel):
 
 
 class PageSection(BaseModel):
-    heading: str
-    text: str
+    heading: str = Field(..., max_length=5000)
+    text: str = Field(..., max_length=50000)
 
 
 class NarratePageRequest(BaseModel):
     sections: List[PageSection]
-    page_title: Optional[str] = ""
-    page_url: Optional[str] = ""
+    page_title: Optional[str] = Field(default="", max_length=5000)
+    page_url: Optional[str] = Field(default="", max_length=5000)
 
 
 class NarratePageResponse(BaseModel):
@@ -198,8 +202,8 @@ class NarrateTopic(BaseModel):
 
 class NarrateOverviewRequest(BaseModel):
     sections: List[PageSection]
-    page_title: Optional[str] = ""
-    page_url: Optional[str] = ""
+    page_title: Optional[str] = Field(default="", max_length=5000)
+    page_url: Optional[str] = Field(default="", max_length=5000)
 
 
 class NarrateOverviewResponse(BaseModel):
@@ -208,8 +212,8 @@ class NarrateOverviewResponse(BaseModel):
 
 
 class NarrateTopicRequest(BaseModel):
-    topic_name: str
-    section_text: str
+    topic_name: str = Field(..., max_length=5000)
+    section_text: str = Field(..., max_length=50000)
     conversation_history: Optional[List[Dict[str, str]]] = []
     heard_topics: Optional[List[str]] = []
     available_topics: Optional[List[str]] = []
@@ -223,9 +227,9 @@ class NarrateTopicResponse(BaseModel):
 # ========== INTELLIGENT PAGE SIMPLIFICATION ==========
 
 class SimplifyRequest(BaseModel):
-    page_url: str
-    page_title: str
-    page_content: str  # Extracted text content
+    page_url: str = Field(..., max_length=5000)
+    page_title: str = Field(..., max_length=5000)
+    page_content: str = Field(..., max_length=50000)  # Extracted text content
     user_profile: Optional[UserProfile] = None
 
 
@@ -365,16 +369,16 @@ Suggestion rules — always include a short, helpful follow-up suggestion:
 class PageElement(BaseModel):
     index: int
     tag: str           # "a", "button", "input", etc.
-    text: str          # visible text or label
+    text: str = Field(..., max_length=5000)          # visible text or label
     type: Optional[str] = None  # input type, if applicable
     region: Optional[str] = "other"  # page region: nav, main, article, footer, etc.
 
 
 class InterpretCommandRequest(BaseModel):
-    command: str
+    command: str = Field(..., max_length=5000)
     elements: List[PageElement]
-    page_title: Optional[str] = ""
-    page_url: Optional[str] = ""
+    page_title: Optional[str] = Field(default="", max_length=5000)
+    page_url: Optional[str] = Field(default="", max_length=5000)
     conversation_history: Optional[List[Dict[str, str]]] = []
 
 
@@ -406,6 +410,14 @@ IMPORTANT: Return ONLY a valid JSON object with no markdown formatting, no code 
 }
 
 Generate CSS rules that will significantly improve accessibility for the given page. Be specific with selectors when possible, but also include broad selectors for general improvements."""
+
+
+def extract_json(text: str) -> dict:
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    return json.loads(text)
 
 
 @app.get("/")
@@ -443,49 +455,6 @@ async def api_finger_tracker_status():
     }
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """
-    Process user message with page context and return AI response with actions.
-
-    This endpoint receives:
-    - message: User's text or voice command
-    - page_context: Structured data about the current webpage
-    - user_profile: User's accessibility preferences
-
-    Returns:
-    - response_text: Friendly text response to the user
-    - actions: List of actions to execute on the page
-    """
-
-    # TODO: Integrate Claude API here
-    # For now, return a placeholder response
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        # Return demo response if no API key
-        return ChatResponse(
-            response_text=f"I received your message: '{request.message}'. API key not configured - running in demo mode.",
-            actions=[]
-        )
-
-    # TODO: Implement Claude API call
-    # Example integration:
-    # from anthropic import Anthropic
-    # client = Anthropic(api_key=api_key)
-    # response = client.messages.create(
-    #     model="claude-sonnet-4-20250514",
-    #     max_tokens=1024,
-    #     system=SYSTEM_PROMPT,
-    #     messages=[{"role": "user", "content": build_prompt(request)}]
-    # )
-
-    return ChatResponse(
-        response_text=f"I received your message: '{request.message}'. Full AI integration coming soon!",
-        actions=[]
-    )
-
-
 # --- Content Description & Narration endpoints (GPT-4o-mini) ---
 
 def _build_image_content_block(image: ImageItem) -> dict:
@@ -515,11 +484,9 @@ async def describe_images(request: DescribeImagesRequest):
     Describe images on the page using GPT-4o-mini Vision.
     Accepts images as base64 or URL. Returns a description for each.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured in .env")
-
-    client = OpenAI(api_key=api_key)
+    client = get_openai_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
     descriptions = []
 
     for idx, image in enumerate(request.images):
@@ -566,11 +533,9 @@ async def narrate_page(request: NarratePageRequest):
     Generate an accessibility-friendly narration of the page using GPT-4o-mini.
     Accepts page sections (heading + text) and returns a structured narration.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured in .env")
-
-    client = OpenAI(api_key=api_key)
+    client = get_openai_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
 
     sections_text = "\n".join(
         f"[{s.heading}]\n{s.text}" for s in request.sections
@@ -610,11 +575,9 @@ async def narrate_overview(request: NarrateOverviewRequest):
     """
     Analyze page sections and return a natural overview with available topics.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured in .env")
-
-    client = OpenAI(api_key=api_key)
+    client = get_openai_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
 
     sections_text = "\n".join(
         f"[{s.heading}]\n{s.text[:300]}" for s in request.sections
@@ -645,12 +608,7 @@ async def narrate_overview(request: NarrateOverviewRequest):
         )
         response_text = response.choices[0].message.content.strip()
 
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        data = json.loads(response_text)
+        data = extract_json(response_text)
         topics = [NarrateTopic(**t) for t in data.get("topics", [])]
         return NarrateOverviewResponse(
             overview=data.get("overview", "Here's what's on this page."),
@@ -668,11 +626,9 @@ async def narrate_topic(request: NarrateTopicRequest):
     """
     Narrate a specific topic section naturally and suggest what to hear next.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured in .env")
-
-    client = OpenAI(api_key=api_key)
+    client = get_openai_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
 
     # Build conversation context
     history_text = ""
@@ -708,12 +664,7 @@ async def narrate_topic(request: NarrateTopicRequest):
         )
         response_text = response.choices[0].message.content.strip()
 
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        data = json.loads(response_text)
+        data = extract_json(response_text)
         return NarrateTopicResponse(
             narration=data.get("narration", "Here's what I found about this topic."),
             follow_up=data.get("follow_up", "What else would you like to know?")
@@ -733,11 +684,9 @@ async def interpret_command(request: InterpretCommandRequest):
     Use GPT-4o-mini to interpret a natural-language voice command
     and map it to a page action (click, highlight, type, scroll).
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return InterpretCommandResponse(
-            action="none", explanation="AI not configured (no OPENAI_API_KEY)."
-        )
+    client = get_openai_client()
+    if not client:
+        return InterpretCommandResponse(action="none", explanation="AI not configured (no OPENAI_API_KEY).")
 
     # Build the element list grouped by region (cap at 120, frontend pre-sorts by priority)
     REGION_ORDER = ["main", "article", "form", "other", "header", "nav", "sidebar", "footer"]
@@ -782,7 +731,6 @@ async def interpret_command(request: InterpretCommandRequest):
     )
 
     try:
-        client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -794,13 +742,7 @@ async def interpret_command(request: InterpretCommandRequest):
         )
         response_text = response.choices[0].message.content.strip()
 
-        # Handle markdown-wrapped JSON
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        data = json.loads(response_text)
+        data = extract_json(response_text)
         return InterpretCommandResponse(
             action=data.get("action", "none"),
             target_index=data.get("target_index"),
@@ -833,11 +775,10 @@ async def simplify_page(request: SimplifyRequest):
     - changes_description: List of specific changes made
     """
 
-    openai_key = os.getenv("OPENAI_API_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
 
     # Check if we have any AI provider available
-    has_openai = openai_key and OPENAI_AVAILABLE
+    has_openai = get_openai_client() is not None and OPENAI_AVAILABLE
     has_anthropic = anthropic_key and ANTHROPIC_AVAILABLE
 
     if not has_openai and not has_anthropic:
@@ -919,7 +860,7 @@ Return ONLY the JSON object, no other text."""
 
         if has_openai:
             # Use OpenAI
-            client = openai.OpenAI(api_key=openai_key)
+            client = get_openai_client()
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -945,13 +886,7 @@ Return ONLY the JSON object, no other text."""
             response_text = message.content[0].text.strip()
 
         # Try to extract JSON from the response
-        # Handle case where response might have markdown code blocks
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        data = json.loads(response_text)
+        data = extract_json(response_text)
 
         css_rules = [CSSRule(**rule) for rule in data.get("css_rules", [])]
 
@@ -980,7 +915,7 @@ Return ONLY the JSON object, no other text."""
 # ========== TEXT-TO-SPEECH ENDPOINT ==========
 
 class TTSRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=5000)
     voice: Optional[str] = "nova"  # nova, alloy, echo, fable, onyx, shimmer
 
 
@@ -990,12 +925,11 @@ async def text_to_speech(request: TTSRequest):
     Convert text to natural-sounding speech using OpenAI TTS.
     Returns audio/mpeg binary data.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    client = get_openai_client()
+    if not client:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
 
     try:
-        client = OpenAI(api_key=api_key)
         response = client.audio.speech.create(
             model="tts-1",
             voice=request.voice,
@@ -1023,8 +957,8 @@ async def accessibility_summary(request: AccessibilitySummaryRequest):
     """
     Generate a conversational AI summary of an accessibility scan report.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    client = get_openai_client()
+    if not client:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
 
     report = request.report
@@ -1058,7 +992,6 @@ async def accessibility_summary(request: AccessibilitySummaryRequest):
     )
 
     try:
-        client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
